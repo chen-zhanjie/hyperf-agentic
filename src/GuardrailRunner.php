@@ -27,13 +27,12 @@ class GuardrailRunner
             if (!class_exists($className)) {
                 continue;
             }
-            $instance = new $className();
-            if (!($instance instanceof GuardrailInterface)) {
+            if (!is_a($className, GuardrailInterface::class, true)) {
                 throw new \InvalidArgumentException(
                     "Class [{$className}] does not implement GuardrailInterface"
                 );
             }
-            $this->guardrails[] = $instance;
+            $this->guardrails[] = new $className();
         }
     }
 

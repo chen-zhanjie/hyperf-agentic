@@ -21,7 +21,7 @@ class LlmClient
     private readonly LoggerInterface $logger;
 
     /** @var callable|null Adapter factory */
-    private $adapterFactory;
+    private $adapterFactory = null;
 
     public function __construct(
         array $providerConfigs = [],
@@ -120,7 +120,7 @@ class LlmClient
     private function getProviderConfig(string $provider): array
     {
         if (!isset($this->providerConfigs[$provider])) {
-            throw new \InvalidArgumentException("LLM Provider [{$provider}] 未配置");
+            throw new \InvalidArgumentException("LLM Provider [{$provider}] is not configured");
         }
         return $this->providerConfigs[$provider];
     }
@@ -178,7 +178,7 @@ class LlmClient
         }
 
         throw new \RuntimeException(
-            'LLM 调用失败: ' . ($lastException?->getMessage() ?? '未知错误'),
+            'LLM call failed: ' . ($lastException?->getMessage() ?? 'unknown error'),
             0,
             $lastException,
         );

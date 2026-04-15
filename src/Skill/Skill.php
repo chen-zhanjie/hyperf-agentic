@@ -21,13 +21,13 @@ class Skill
     {
         $content = file_get_contents($filePath);
         if ($content === false) {
-            throw new \RuntimeException("无法读取 SKILL.md: {$filePath}");
+            throw new \RuntimeException("Cannot read SKILL.md: {$filePath}");
         }
 
         $directory = dirname($filePath);
 
         if (!preg_match('/^---\s*\n(.*?)\n---\s*\n(.*)/s', $content, $matches)) {
-            throw new \RuntimeException("SKILL.md 缺少 frontmatter: {$filePath}");
+            throw new \RuntimeException("SKILL.md missing frontmatter: {$filePath}");
         }
 
         $frontmatter = Yaml::parse($matches[1]);
@@ -36,7 +36,7 @@ class Skill
         $description = $frontmatter['description'] ?? '';
 
         if (empty($name) || empty($description)) {
-            throw new \RuntimeException("SKILL.md frontmatter 必须包含 name 和 description: {$filePath}");
+            throw new \RuntimeException("SKILL.md frontmatter must contain name and description: {$filePath}");
         }
 
         // Normalize name: underscores/spaces → hyphens
@@ -44,7 +44,7 @@ class Skill
         $dirName = basename($directory);
         if ($name !== $dirName && $name !== str_replace(['_', ' '], '-', $dirName)) {
             throw new \RuntimeException(
-                "SKILL.md name [{$name}] 与目录名 [{$dirName}] 不匹配: {$filePath}"
+                "SKILL.md name [{$name}] does not match directory name [{$dirName}]: {$filePath}"
             );
         }
 

@@ -93,12 +93,12 @@ class CliHumanInputResolverTest extends TestCase
 
     public function testSelectFieldWithAllowOtherChoosesCustom(): void
     {
-        // choice returns '<自定义输入>', then ask for custom value
+        // choice returns '<Custom input>', then ask for custom value
         $this->io->method('choice')
-            ->with('Color', ['Red', 'Blue', '<自定义输入>'])
-            ->willReturn('<自定义输入>');
+            ->with('Color', ['Red', 'Blue', '<Custom input>'])
+            ->willReturn('<Custom input>');
         $this->io->method('ask')
-            ->with('请输入自定义内容')
+            ->with('Enter custom value')
             ->willReturn('green');
 
         $result = $this->resolver->ask('Choose', [
@@ -118,8 +118,8 @@ class CliHumanInputResolverTest extends TestCase
     {
         // For each option, confirm is called
         $confirmMap = [
-            ['  包含 Red?', false, false],
-            ['  包含 Blue?', false, true],
+            ['  Include Red?', false, false],
+            ['  Include Blue?', false, true],
         ];
         $this->io->method('confirm')
             ->willReturnCallback(function (string $question, bool $default) use (&$confirmMap) {

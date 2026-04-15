@@ -78,7 +78,7 @@ class AgenticTest extends TestCase
         );
 
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('未定义');
+        $this->expectExceptionMessage('not defined');
 
         $agentic->run('nonexistent', [['role' => 'user', 'content' => 'hi']]);
     }

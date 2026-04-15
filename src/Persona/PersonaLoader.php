@@ -41,7 +41,7 @@ class PersonaLoader
     {
         $realPath = realpath($path);
         if ($realPath === false) {
-            throw new \InvalidArgumentException("SOUL.md 文件不存在: {$path}");
+            throw new \InvalidArgumentException("SOUL.md file not found: {$path}");
         }
 
         $isAllowed = false;
@@ -54,7 +54,7 @@ class PersonaLoader
 
         if (!$isAllowed) {
             throw new \InvalidArgumentException(
-                "SOUL.md 文件必须在允许的目录中。路径: {$path}，允许: " . implode(', ', $this->allowedDirs)
+                "SOUL.md file must be in an allowed directory. Path: {$path}, allowed: " . implode(', ', $this->allowedDirs)
             );
         }
 

@@ -68,13 +68,13 @@ class CliHumanInputResolver implements HumanInputResolverInterface
         }
 
         if ($field['allow_other'] ?? false) {
-            $choices[] = '<自定义输入>';
+            $choices[] = '<Custom input>';
         }
 
         $selected = $this->io->choice($field['label'], $choices);
 
-        if (($field['allow_other'] ?? false) && $selected === '<自定义输入>') {
-            $custom = $this->io->ask('请输入自定义内容');
+        if (($field['allow_other'] ?? false) && $selected === '<Custom input>') {
+            $custom = $this->io->ask('Enter custom value');
             $other[$field['name']] = $custom;
             return $custom;
         }
@@ -88,13 +88,13 @@ class CliHumanInputResolver implements HumanInputResolverInterface
         $options = $field['options'];
 
         foreach ($options as $opt) {
-            if ($this->io->confirm("  包含 {$opt['label']}?", false)) {
+            if ($this->io->confirm("  Include {$opt['label']}?", false)) {
                 $selected[] = $opt['value'];
             }
         }
 
-        if (($field['allow_other'] ?? false) && $this->io->confirm('  添加自定义选项?', false)) {
-            $custom = $this->io->ask('  请输入自定义内容');
+        if (($field['allow_other'] ?? false) && $this->io->confirm('  Add a custom option?', false)) {
+            $custom = $this->io->ask('  Enter custom value');
             $selected[] = $custom;
             $other[$field['name']] = $custom;
         }

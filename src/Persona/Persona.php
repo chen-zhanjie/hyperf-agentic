@@ -21,7 +21,7 @@ class Persona
     {
         $content = @file_get_contents($path);
         if ($content === false) {
-            throw new \RuntimeException("无法读取 SOUL.md: {$path}");
+            throw new \RuntimeException("Cannot read SOUL.md: {$path}");
         }
         return self::fromMarkdown($content);
     }

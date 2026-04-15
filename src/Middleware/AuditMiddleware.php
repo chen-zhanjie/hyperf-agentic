@@ -64,27 +64,34 @@ class AuditMiddleware implements MiddlewareInterface
     }
 
     /**
-     * Redact sensitive fields from data.
+     * Redact sensitive fields from data — returns a new array without mutating input.
      */
     private function redactSensitive(array $data): array
     {
-        $sensitiveKeys = [
-            'password', 'passwd', 'pwd',
-            'api_key', 'apikey', 'api_secret',
-            'secret', 'secret_key', 'access_token', 'refresh_token',
-            'token', 'auth_token', 'bearer_token',
-            'credit_card', 'card_number', 'cvv',
-            'ssn', 'id_card', 'phone', 'mobile', 'email',
-            'bank_account', 'iban',
-        ];
+        static $lowerSensitiveKeys = null;
+        if ($lowerSensitiveKeys === null) {
+            $lowerSensitiveKeys = [
+                'password', 'passwd', 'pwd',
+                'api_key', 'apikey', 'api_secret',
+                'secret', 'secret_key', 'access_token', 'refresh_token',
+                'token', 'auth_token', 'bearer_token',
+                'credit_card', 'card_number', 'cvv',
+                'ssn', 'id_card', 'phone', 'mobile', 'email',
+                'bank_account', 'iban',
+            ];
+        }
+
+        $result = [];
         foreach ($data as $key => $value) {
             if (is_array($value)) {
-                $data[$key] = $this->redactSensitive($value);
-            } elseif (in_array(strtolower($key), $sensitiveKeys, true)) {
-                $data[$key] = '***REDACTED***';
+                $result[$key] = $this->redactSensitive($value);
+            } elseif (in_array(strtolower($key), $lowerSensitiveKeys, true)) {
+                $result[$key] = '***REDACTED***';
+            } else {
+                $result[$key] = $value;
             }
         }
-        return $data;
+        return $result;
     }
 
     private function log(string $event, array $context): void

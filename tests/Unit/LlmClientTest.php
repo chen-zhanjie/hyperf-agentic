@@ -139,7 +139,7 @@ class LlmClientTest extends TestCase
         );
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('LLM 调用失败');
+        $this->expectExceptionMessage('LLM call failed');
         $client->chat([['role' => 'user', 'content' => 'hi']]);
     }
 

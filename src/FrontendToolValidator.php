@@ -9,6 +9,17 @@ namespace ChenZhanjie\Agentic;
  */
 class FrontendToolValidator
 {
+    public const ERR_TOOL_COUNT_EXCEEDED = 'Frontend tool count exceeds limit (max %d)';
+    public const ERR_MISSING_FIELDS = 'Tool missing required fields (name/description/parameters)';
+    public const ERR_INVALID_NAME_FORMAT = 'Tool name [%s] has invalid format';
+    public const ERR_DUPLICATE_NAME = 'Tool name [%s] is duplicated';
+    public const ERR_RESERVED_NAME = 'Tool name [%s] conflicts with a backend tool';
+    public const ERR_NOT_IN_WHITELIST = 'Tool name [%s] is not in the whitelist';
+    public const ERR_DESCRIPTION_TOO_LONG = 'Tool [%s] description exceeds max length';
+    public const ERR_PARAMS_NOT_OBJECT = "Tool [%s] parameters.type must be 'object'";
+    public const ERR_TOO_MANY_PARAMS = 'Tool [%s] has too many parameters';
+    public const ERR_SCHEMA_TOO_DEEP = 'Tool [%s] parameter schema nesting is too deep';
+
     /**
      * @param array<string> $reservedNames Backend tool names (frontend cannot override)
      * @param array<string> $allowedNames Whitelist (empty = allow all valid names)
@@ -37,13 +48,13 @@ class FrontendToolValidator
         $seenNames = [];
 
         if (count($schemas) > $this->maxCount) {
-            return ['valid' => [], 'errors' => ["前端工具数量超过限制（最多 {$this->maxCount} 个）"]];
+            return ['valid' => [], 'errors' => [sprintf(self::ERR_TOOL_COUNT_EXCEEDED, $this->maxCount)]];
         }
 
         foreach ($schemas as $schema) {
             // Required fields
             if (!isset($schema['name'], $schema['description'], $schema['parameters'])) {
-                $errors[] = '工具缺少必要字段 (name/description/parameters)';
+                $errors[] = self::ERR_MISSING_FIELDS;
                 continue;
             }
 
@@ -51,51 +62,51 @@ class FrontendToolValidator
 
             // Name format: letter start, alphanumeric + underscore/dash, max 64
             if (!preg_match('/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/', $name)) {
-                $errors[] = "工具名 [{$name}] 格式无效";
+                $errors[] = sprintf(self::ERR_INVALID_NAME_FORMAT, $name);
                 continue;
             }
 
             // Duplicate name check
             if (in_array($name, $seenNames, true)) {
-                $errors[] = "工具名 [{$name}] 重复";
+                $errors[] = sprintf(self::ERR_DUPLICATE_NAME, $name);
                 continue;
             }
             $seenNames[] = $name;
 
             // No conflict with backend tools
             if (in_array($name, $this->reservedNames, true)) {
-                $errors[] = "工具名 [{$name}] 与后端工具冲突";
+                $errors[] = sprintf(self::ERR_RESERVED_NAME, $name);
                 continue;
             }
 
             // Whitelist check
             if (!empty($this->allowedNames) && !in_array($name, $this->allowedNames, true)) {
-                $errors[] = "工具名 [{$name}] 未在白名单中";
+                $errors[] = sprintf(self::ERR_NOT_IN_WHITELIST, $name);
                 continue;
             }
 
             // Description length
             if (mb_strlen((string) $schema['description']) > $this->maxDescLength) {
-                $errors[] = "工具 [{$name}] 描述过长";
+                $errors[] = sprintf(self::ERR_DESCRIPTION_TOO_LONG, $name);
                 continue;
             }
 
             // Parameters must be object type
             if (($schema['parameters']['type'] ?? '') !== 'object') {
-                $errors[] = "工具 [{$name}] parameters.type 必须为 'object'";
+                $errors[] = sprintf(self::ERR_PARAMS_NOT_OBJECT, $name);
                 continue;
             }
 
             // Param count
             $propCount = count($schema['parameters']['properties'] ?? []);
             if ($propCount > $this->maxParams) {
-                $errors[] = "工具 [{$name}] 参数过多";
+                $errors[] = sprintf(self::ERR_TOO_MANY_PARAMS, $name);
                 continue;
             }
 
             // Schema depth
             if ($this->measureDepth($schema['parameters']) > $this->maxDepth) {
-                $errors[] = "工具 [{$name}] 参数 schema 嵌套过深";
+                $errors[] = sprintf(self::ERR_SCHEMA_TOO_DEEP, $name);
                 continue;
             }
 

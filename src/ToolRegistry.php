@@ -14,7 +14,7 @@ class ToolRegistry
     {
         $name = $tool->name();
         if (isset($this->entries[$name])) {
-            throw new \InvalidArgumentException("工具 [{$name}] 已注册，不能重复注册");
+            throw new \InvalidArgumentException("Tool [{$name}] is already registered");
         }
         $this->entries[$name] = new ToolEntry($tool, $group, $maxResultSize);
     }
@@ -30,7 +30,7 @@ class ToolRegistry
     public function resolve(string $name): ToolInterface
     {
         if (!isset($this->entries[$name])) {
-            throw new \InvalidArgumentException("工具 [{$name}] 未注册");
+            throw new \InvalidArgumentException("Tool [{$name}] is not registered");
         }
         return $this->entries[$name]->tool;
     }
@@ -39,7 +39,7 @@ class ToolRegistry
     {
         $entry = $this->entries[$name] ?? null;
         if ($entry === null) {
-            return ToolExecutionResult::error($name, "工具 [{$name}] 不存在");
+            return ToolExecutionResult::error($name, "Tool [{$name}] not found");
         }
 
         try {

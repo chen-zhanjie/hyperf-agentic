@@ -37,7 +37,7 @@ class ToolRegistryTest extends TestCase
         $this->registry->register($tool);
 
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('已注册');
+        $this->expectExceptionMessage('already registered');
         $this->registry->register($tool);
     }
 
@@ -46,7 +46,7 @@ class ToolRegistryTest extends TestCase
     public function testResolveUnknownThrows(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('未注册');
+        $this->expectExceptionMessage('not registered');
         $this->registry->resolve('unknown');
     }
 
@@ -87,7 +87,7 @@ class ToolRegistryTest extends TestCase
     {
         $result = $this->registry->execute('missing', []);
         $this->assertFalse($result->success);
-        $this->assertStringContainsString('不存在', $result->toText());
+        $this->assertStringContainsString('not found', $result->toText());
     }
 
     public function testExecuteReturnsErrorOnException(): void

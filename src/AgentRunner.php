@@ -68,8 +68,17 @@ class AgentRunner
     {
         $startTime = hrtime(true);
 
+        // Validate required state fields
         $messages = $state['messages'] ?? [];
+        if (empty($messages) || !is_array($messages)) {
+            throw new \InvalidArgumentException('Invalid resume state: messages must be a non-empty array');
+        }
+
         $remainingIterations = (int) ($state['remaining_iterations'] ?? 5);
+        if ($remainingIterations < 1) {
+            throw new \InvalidArgumentException('Invalid resume state: remaining_iterations must be >= 1');
+        }
+
         $agentConfig = $state['agent_config'] ?? [];
         $agentName = $state['agent_name'] ?? 'Assistant';
 
@@ -96,6 +105,7 @@ class AgentRunner
             budget: $budget,
             systemPrompt: $systemPrompt,
             scene: $scene,
+            costBudget: $costBudget,
         );
 
         $this->promptBuilder->reset();
@@ -186,6 +196,7 @@ class AgentRunner
             budget: $budget,
             systemPrompt: $systemPrompt,
             scene: $scene,
+            costBudget: $costBudget,
         );
 
         // Phase 5: Middleware — before loop
@@ -366,33 +377,7 @@ class AgentRunner
             'tool_calls' => $toolCalls,
         ];
 
-        foreach ($toolCalls as $toolCall) {
-            $callId = $toolCall['id'] ?? ('call_grace');
-            $toolName = $toolCall['function']['name'] ?? '';
-            $argumentsStr = $toolCall['function']['arguments'] ?? '{}';
-            $arguments = json_decode($argumentsStr, true) ?? [];
-
-            $this->emitEvent($onEvent, AgentEventType::TOOL_CALL, [
-                'call_id' => $callId,
-                'name' => $toolName,
-                'arguments' => $arguments,
-            ]);
-
-            $toolResult = $this->dispatchTool($toolName, $arguments);
-
-            $this->emitEvent($onEvent, AgentEventType::TOOL_RESULT, [
-                'call_id' => $callId,
-                'name' => $toolName,
-                'result' => $toolResult,
-                'success' => true,
-            ]);
-
-            $fullMessages[] = [
-                'role' => 'tool',
-                'tool_call_id' => $callId,
-                'content' => $toolResult,
-            ];
-        }
+        $this->processToolCalls($toolCalls, $fullMessages, $onEvent, 'grace', false);
 
         return null; // Grace turn didn't produce text → truly exhausted
     }
@@ -410,7 +395,7 @@ class AgentRunner
         array $options,
         ?callable $onEvent,
         int $startTime,
-        int $iterations,
+        int &$iterations,
         int &$totalPromptTokens,
         int &$totalCompletionTokens,
         int &$totalToolCalls,
@@ -501,30 +486,57 @@ class AgentRunner
             'tool_calls' => $toolCalls,
         ];
 
-        foreach ($toolCalls as $toolCall) {
-            $callId = $toolCall['id'] ?? ('call_' . $iterations);
+        $this->processToolCalls($toolCalls, $fullMessages, $onEvent, (string) $iterations, true);
+
+        return null; // Tool calls processed — continue loop
+    }
+
+    /**
+     * Process a batch of tool calls: emit events, dispatch, append results.
+     * When enforceParallel is true, parallel tools are skipped if any non-parallel tool is present.
+     */
+    private function processToolCalls(
+        array $toolCalls,
+        array &$fullMessages,
+        ?callable $onEvent,
+        string $callIdPrefix,
+        bool $enforceParallel,
+    ): void {
+        // Pre-check: detect non-parallel tools in the batch
+        $hasNonParallel = false;
+        if ($enforceParallel && count($toolCalls) > 1) {
+            foreach ($toolCalls as $tc) {
+                if (!$this->isToolParallelAllowed($tc['function']['name'] ?? '')) {
+                    $hasNonParallel = true;
+                    break;
+                }
+            }
+        }
+
+        foreach ($toolCalls as $i => $toolCall) {
+            $callId = $toolCall['id'] ?? ($callIdPrefix . '_' . $i);
             $toolName = $toolCall['function']['name'] ?? '';
             $argumentsStr = $toolCall['function']['arguments'] ?? '{}';
             $arguments = json_decode($argumentsStr, true) ?? [];
 
-            // Parallel enforcement: if tool is non-parallel and there are other
-            // tool calls in this batch, only process this one and return to loop
-            if (count($toolCalls) > 1 && !$this->isToolParallelAllowed($toolName)) {
-                $toolCalls = [$toolCall]; // only process this one
-                break;
+            // Skip parallel tools when non-parallel tools are present in this batch
+            if ($hasNonParallel && $this->isToolParallelAllowed($toolName)) {
+                $fullMessages[] = [
+                    'role' => 'tool',
+                    'tool_call_id' => $callId,
+                    'content' => 'Tool call skipped: non-parallel tool detected in batch. Re-request if still needed.',
+                ];
+                continue;
             }
 
-            // Emit tool_call event
             $this->emitEvent($onEvent, AgentEventType::TOOL_CALL, [
                 'call_id' => $callId,
                 'name' => $toolName,
                 'arguments' => $arguments,
             ]);
 
-            // Dispatch tool through the chain
             $toolResult = $this->dispatchTool($toolName, $arguments);
 
-            // Emit tool_result event
             $this->emitEvent($onEvent, AgentEventType::TOOL_RESULT, [
                 'call_id' => $callId,
                 'name' => $toolName,
@@ -532,15 +544,12 @@ class AgentRunner
                 'success' => true,
             ]);
 
-            // Append tool result message
             $fullMessages[] = [
                 'role' => 'tool',
                 'tool_call_id' => $callId,
                 'content' => $toolResult,
             ];
         }
-
-        return null; // Tool calls processed — continue loop
     }
 
     /**

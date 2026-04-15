@@ -24,7 +24,7 @@ class AgentConfigManager
     public function get(string $agentName, array $runtimeOptions = []): array
     {
         if (!isset($this->agentDefs[$agentName])) {
-            throw new \InvalidArgumentException("Agent [{$agentName}] 未定义");
+            throw new \InvalidArgumentException("Agent [{$agentName}] is not defined");
         }
 
         return array_replace_recursive(

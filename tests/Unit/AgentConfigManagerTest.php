@@ -49,7 +49,7 @@ class AgentConfigManagerTest extends TestCase
     public function testGetThrowsForUndefinedAgent(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('Agent [unknown] 未定义');
+        $this->expectExceptionMessage('Agent [unknown] is not defined');
 
         $this->manager->get('unknown');
     }

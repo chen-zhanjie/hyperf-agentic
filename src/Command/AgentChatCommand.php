@@ -29,10 +29,10 @@ class AgentChatCommand extends Command
 
     protected function configure(): void
     {
-        $this->setDescription('与 Agent 进行交互式对话');
-        $this->addArgument('agent', InputArgument::OPTIONAL, 'Agent 名称', 'default');
-        $this->addOption('no-input', null, InputOption::VALUE_NONE, '无人值守模式');
-        $this->addOption('model', 'm', InputOption::VALUE_OPTIONAL, '覆盖默认模型');
+        $this->setDescription('Interactive agent chat session');
+        $this->addArgument('agent', InputArgument::OPTIONAL, 'Agent name', 'default');
+        $this->addOption('no-input', null, InputOption::VALUE_NONE, 'Unattended mode (no human input)');
+        $this->addOption('model', 'm', InputOption::VALUE_OPTIONAL, 'Override default model');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -47,7 +47,7 @@ class AgentChatCommand extends Command
         $this->agentic->setHumanInputResolver($resolver);
 
         $io->title("Agentic Chat — Agent: {$agentName}");
-        $io->writeln('输入 /quit 或 /exit 退出');
+        $io->writeln('Type /quit or /exit to leave');
         $io->writeln('');
 
         $messages = [];
@@ -73,8 +73,8 @@ class AgentChatCommand extends Command
             try {
                 $result = $this->agentic->run($agentName, $messages, $options);
             } catch (AgentSuspendedException $e) {
-                $io->warning("Agent 已挂起: {$e->getMessage()}");
-                $io->note('可通过 resume API 恢复会话');
+                $io->warning("Agent suspended: {$e->getMessage()}");
+                $io->note('Use the resume API to recover this session');
                 break;
             }
 

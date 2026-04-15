@@ -148,6 +148,7 @@ class PromptBuilder
         string $scene = 'http',
         ?SkillRegistry $skillRegistry = null,
         array $enabledSkills = [],
+        ?CostBudget $costBudget = null,
     ): string {
         if ($this->cachedPrompt === null) {
             $this->buildCachedPrompt(
@@ -156,7 +157,7 @@ class PromptBuilder
             );
         }
 
-        $ephemeral = $this->buildEphemeralPrompt($runtimeContext, [], $budget);
+        $ephemeral = $this->buildEphemeralPrompt($runtimeContext, [], $budget, $costBudget);
 
         if ($ephemeral === '') {
             return $this->cachedPrompt;
