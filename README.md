@@ -1,5 +1,7 @@
 # Hyperf Agentic SDK
 
+[简体中文](README.zh-CN.md) | English
+
 A config-driven AI Agent SDK for Hyperf applications. Define agents as configuration, not classes.
 
 ## Installation
