@@ -1,0 +1,644 @@
+<?php
+declare(strict_types=1);
+
+namespace ChenZhanjie\Agentic;
+
+use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
+use ChenZhanjie\Agentic\Event\AgentEventType;
+use ChenZhanjie\Agentic\Event\EventEmitter;
+use ChenZhanjie\Agentic\Persona\Persona;
+use ChenZhanjie\Agentic\Tool\Builtin\AskTool;
+
+/**
+ * Agent Runner — conversation loop + tool dispatch chain + guardrails + middleware.
+ *
+ * Layer 3 of the 5-layer architecture.
+ */
+class AgentRunner
+{
+    use EventEmitter;
+
+    /** @var array<string, callable> Agent-level tool handlers (bypass ToolRegistry) */
+    private array $agentToolHandlers = [];
+
+    /** @var HumanInputResolverInterface|null Injected before dispatch for AskTool */
+    private ?HumanInputResolverInterface $humanInputResolver = null;
+
+    public function __construct(
+        private readonly LlmClient $llmClient,
+        private readonly PromptBuilder $promptBuilder,
+        private readonly ToolRegistry $toolRegistry,
+        private readonly GuardrailRunner $guardrailRunner,
+        private readonly MiddlewarePipeline $middleware,
+    ) {}
+
+    /**
+     * Register an agent-level tool handler.
+     * Agent-level handlers take priority over ToolRegistry dispatch.
+     */
+    public function registerAgentTool(string $name, callable $handler): void
+    {
+        $this->agentToolHandlers[$name] = $handler;
+    }
+
+    /**
+     * Set the human input resolver (injected into AskTool at dispatch time).
+     */
+    public function setHumanInputResolver(HumanInputResolverInterface $resolver): void
+    {
+        $this->humanInputResolver = $resolver;
+    }
+
+    /**
+     * Resume a suspended agent session.
+     * Restores state from SessionStore and continues the conversation loop.
+     *
+     * @param array  $state     Suspended state (messages, remaining_iterations, agent_config, agent_name)
+     * @param string $sessionId Session ID
+     */
+    public function resume(array $state, string $sessionId): AgentResult
+    {
+        $startTime = hrtime(true);
+
+        $messages = $state['messages'] ?? [];
+        $remainingIterations = (int) ($state['remaining_iterations'] ?? 5);
+        $agentConfig = $state['agent_config'] ?? [];
+        $agentName = $state['agent_name'] ?? 'Assistant';
+
+        // Setup
+        $budget = new IterationBudget(maxTotal: $remainingIterations);
+        $costBudget = new CostBudget(maxTotalTokens: (int) ($agentConfig['max_cost_tokens'] ?? 0) ?: PHP_INT_MAX);
+
+        $persona = $this->resolvePersona($agentConfig);
+        $systemPrompt = $agentConfig['system_prompt'] ?? '';
+        $scene = $agentConfig['scene'] ?? 'http';
+        $toolWhitelist = $agentConfig['tools'] ?? [];
+
+        $activeRegistry = $this->toolRegistry;
+        if (!empty($toolWhitelist)) {
+            $activeRegistry = $this->toolRegistry->only($toolWhitelist);
+        }
+
+        $toolSchemas = $activeRegistry->getAvailableSchemas();
+        $systemMessage = $this->promptBuilder->build(
+            persona: $persona,
+            agentName: $agentName,
+            tools: $activeRegistry,
+            runtimeContext: [],
+            budget: $budget,
+            systemPrompt: $systemPrompt,
+            scene: $scene,
+        );
+
+        $this->promptBuilder->reset();
+
+        $fullMessages = array_merge(
+            [['role' => 'system', 'content' => $systemMessage]],
+            $messages,
+        );
+
+        $iterations = 0;
+        $totalPromptTokens = 0;
+        $totalCompletionTokens = 0;
+        $totalToolCalls = 0;
+
+        $result = $this->runLoop(
+            $fullMessages, $systemMessage, $toolSchemas, $budget, $remainingIterations,
+            $costBudget, [], null, $startTime,
+            $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+        );
+
+        if ($result === null && $budget->consumeGrace() && !$costBudget->isExceeded()) {
+            $result = $this->runGraceTurn(
+                $fullMessages, $systemMessage, $toolSchemas, $budget,
+                $costBudget, [], null, $startTime,
+                $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+            );
+        }
+
+        if ($result === null) {
+            return AgentResult::budgetExhausted($iterations, $remainingIterations);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Execute the agent conversation loop.
+     *
+     * @param array         $messages    Conversation history
+     * @param array         $agentConfig Agent configuration
+     * @param array         $options     Runtime overrides
+     * @param callable|null $onEvent     Event callback: callable(string $type, array $payload): void
+     */
+    public function run(
+        array $messages,
+        array $agentConfig = [],
+        array $options = [],
+        ?callable $onEvent = null,
+    ): AgentResult {
+        $startTime = hrtime(true);
+
+        // Phase 1: Setup
+        $maxIterations = (int) ($agentConfig['max_iterations'] ?? 15);
+        $budget = new IterationBudget(maxTotal: $maxIterations);
+        $costBudget = new CostBudget(
+            maxTotalTokens: (int) ($agentConfig['max_cost_tokens'] ?? 0) ?: PHP_INT_MAX,
+        );
+
+        $persona = $this->resolvePersona($agentConfig);
+        $systemPrompt = $agentConfig['system_prompt'] ?? '';
+        $scene = $agentConfig['scene'] ?? 'http';
+        $toolWhitelist = $agentConfig['tools'] ?? [];
+
+        // Resolve active tool registry
+        $activeRegistry = $this->toolRegistry;
+        if (!empty($toolWhitelist)) {
+            $activeRegistry = $this->toolRegistry->only($toolWhitelist);
+        }
+
+        // Phase 2: Input guardrails
+        $guardrailResult = $this->guardrailRunner->checkInput($messages);
+        if ($guardrailResult !== null) {
+            $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
+                'type' => 'input',
+                'name' => 'input_guard',
+                'reason' => $guardrailResult->reason,
+            ]);
+            return AgentResult::guardrailBlocked('input', $guardrailResult->reason, $this->elapsedMs($startTime));
+        }
+
+        // Phase 3: System prompt resolution
+        $toolSchemas = $activeRegistry->getAvailableSchemas();
+        $systemMessage = $this->promptBuilder->build(
+            persona: $persona,
+            agentName: $persona->name,
+            tools: $activeRegistry,
+            runtimeContext: $options['runtime_context'] ?? [],
+            budget: $budget,
+            systemPrompt: $systemPrompt,
+            scene: $scene,
+        );
+
+        // Phase 5: Middleware — before loop
+        $messages = $this->middleware->beforeLoop($messages, $agentConfig);
+
+        // Emit started event
+        $this->emitEvent($onEvent, AgentEventType::STARTED, [
+            'agent' => $persona->name,
+        ]);
+
+        // Build the full message array with system prompt
+        $fullMessages = array_merge(
+            [['role' => 'system', 'content' => $systemMessage]],
+            $messages,
+        );
+
+        // Phase 6: Main loop
+        $iterations = 0;
+        $totalPromptTokens = 0;
+        $totalCompletionTokens = 0;
+        $totalToolCalls = 0;
+
+        $result = $this->runLoop(
+            $fullMessages, $systemMessage, $toolSchemas, $budget, $maxIterations,
+            $costBudget, $options, $onEvent, $startTime,
+            $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+        );
+
+        // Grace turn: budget exhausted but LLM gets one more chance to wrap up
+        if ($result === null && $budget->consumeGrace() && !$costBudget->isExceeded()) {
+            $result = $this->runGraceTurn(
+                $fullMessages, $systemMessage, $toolSchemas, $budget,
+                $costBudget, $options, $onEvent, $startTime,
+                $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+            );
+        }
+
+        // If grace turn also didn't produce a result, or grace was already used
+        if ($result === null) {
+            $this->emitEvent($onEvent, AgentEventType::BUDGET_EXCEEDED, [
+                'iterations' => $iterations,
+                'max' => $maxIterations,
+            ]);
+            return AgentResult::budgetExhausted($iterations, $maxIterations);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Run the main iteration loop.
+     * Returns AgentResult on success, or null when budget is exhausted.
+     */
+    private function runLoop(
+        array &$fullMessages,
+        string $systemMessage,
+        array $toolSchemas,
+        IterationBudget $budget,
+        int $maxIterations,
+        CostBudget $costBudget,
+        array $options,
+        ?callable $onEvent,
+        int $startTime,
+        int &$iterations,
+        int &$totalPromptTokens,
+        int &$totalCompletionTokens,
+        int &$totalToolCalls,
+    ): ?AgentResult {
+        while ($budget->consume() && !$costBudget->isExceeded()) {
+            ++$iterations;
+
+            $turnResult = $this->executeTurn(
+                $fullMessages, $systemMessage, $toolSchemas, $budget,
+                $costBudget, $options, $onEvent, $startTime,
+                $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+            );
+
+            if ($turnResult !== null) {
+                return $turnResult;
+            }
+            // Tool calls processed — continue loop
+        }
+
+        return null; // Budget exhausted
+    }
+
+    /**
+     * Execute one grace turn after budget exhaustion.
+     */
+    private function runGraceTurn(
+        array &$fullMessages,
+        string $systemMessage,
+        array $toolSchemas,
+        IterationBudget $budget,
+        CostBudget $costBudget,
+        array $options,
+        ?callable $onEvent,
+        int $startTime,
+        int &$iterations,
+        int &$totalPromptTokens,
+        int &$totalCompletionTokens,
+        int &$totalToolCalls,
+    ): ?AgentResult {
+        ++$iterations;
+
+        // Build ephemeral prompt with grace message (budget.isExhausted() + grace consumed)
+        $ephemeral = $this->promptBuilder->buildEphemeralPrompt(
+            runtimeContext: $options['runtime_context'] ?? [],
+            budget: $budget,
+        );
+
+        $fullMessages[0]['content'] = $systemMessage . "\n\n---\n\n" . $ephemeral;
+
+        // Middleware — before LLM call
+        $llmOptions = $this->middleware->beforeLlmCall($fullMessages, [
+            'tools' => $toolSchemas,
+        ]);
+
+        $this->emitEvent($onEvent, AgentEventType::THINKING, [
+            'iteration' => $iterations,
+        ]);
+
+        $response = $this->llmClient->chat($fullMessages, $llmOptions);
+        $responseArray = $this->normalizeResponse($response);
+        $content = $responseArray['content'];
+        $toolCalls = $responseArray['tool_calls'] ?? [];
+        $usage = $responseArray['usage'] ?? [];
+
+        $promptTokens = (int) ($usage['prompt_tokens'] ?? 0);
+        $completionTokens = (int) ($usage['completion_tokens'] ?? 0);
+        $totalPromptTokens += $promptTokens;
+        $totalCompletionTokens += $completionTokens;
+        $costBudget->consume($promptTokens, $completionTokens);
+
+        $this->middleware->afterLlmCall($responseArray, $usage);
+
+        // No tool calls → text response → clean finish via grace
+        if (empty($toolCalls)) {
+            $textContent = is_string($content) ? $content : (string) ($content ?? '');
+
+            $outputGuardResult = $this->guardrailRunner->checkOutput($textContent);
+            if ($outputGuardResult !== null) {
+                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
+                    'type' => 'output',
+                    'name' => 'output_guard',
+                    'reason' => $outputGuardResult->reason,
+                ]);
+                return AgentResult::guardrailBlocked('output', $outputGuardResult->reason, $this->elapsedMs($startTime));
+            }
+
+            $result = AgentResult::complete(
+                content: $textContent,
+                iterations: $iterations,
+                elapsedMs: $this->elapsedMs($startTime),
+                promptTokens: $totalPromptTokens,
+                completionTokens: $totalCompletionTokens,
+                toolCalls: $totalToolCalls,
+            );
+
+            $result = $this->middleware->afterLoop($result);
+
+            $this->emitEvent($onEvent, AgentEventType::COMPLETE, [
+                'iterations' => $iterations,
+                'elapsed_ms' => $result->elapsedMs,
+                'prompt_tokens' => $totalPromptTokens,
+                'completion_tokens' => $totalCompletionTokens,
+            ]);
+
+            return $result;
+        }
+
+        // Grace turn still called tools — process them but don't loop further
+        $totalToolCalls += count($toolCalls);
+
+        $fullMessages[] = [
+            'role' => 'assistant',
+            'content' => $content,
+            'tool_calls' => $toolCalls,
+        ];
+
+        foreach ($toolCalls as $toolCall) {
+            $callId = $toolCall['id'] ?? ('call_grace');
+            $toolName = $toolCall['function']['name'] ?? '';
+            $argumentsStr = $toolCall['function']['arguments'] ?? '{}';
+            $arguments = json_decode($argumentsStr, true) ?? [];
+
+            $this->emitEvent($onEvent, AgentEventType::TOOL_CALL, [
+                'call_id' => $callId,
+                'name' => $toolName,
+                'arguments' => $arguments,
+            ]);
+
+            $toolResult = $this->dispatchTool($toolName, $arguments);
+
+            $this->emitEvent($onEvent, AgentEventType::TOOL_RESULT, [
+                'call_id' => $callId,
+                'name' => $toolName,
+                'result' => $toolResult,
+                'success' => true,
+            ]);
+
+            $fullMessages[] = [
+                'role' => 'tool',
+                'tool_call_id' => $callId,
+                'content' => $toolResult,
+            ];
+        }
+
+        return null; // Grace turn didn't produce text → truly exhausted
+    }
+
+    /**
+     * Execute a single turn in the loop.
+     * Returns AgentResult if completed (text response), null if tool calls were processed.
+     */
+    private function executeTurn(
+        array &$fullMessages,
+        string $systemMessage,
+        array $toolSchemas,
+        IterationBudget $budget,
+        CostBudget $costBudget,
+        array $options,
+        ?callable $onEvent,
+        int $startTime,
+        int $iterations,
+        int &$totalPromptTokens,
+        int &$totalCompletionTokens,
+        int &$totalToolCalls,
+    ): ?AgentResult {
+        // Build ephemeral prompt for this turn
+        $ephemeral = $this->promptBuilder->buildEphemeralPrompt(
+            runtimeContext: $options['runtime_context'] ?? [],
+            budget: $budget,
+            costBudget: $costBudget,
+        );
+
+        // Update system message with ephemeral layer
+        $fullMessages[0]['content'] = $systemMessage . "\n\n---\n\n" . $ephemeral;
+
+        // Middleware — before LLM call
+        $llmOptions = $this->middleware->beforeLlmCall($fullMessages, [
+            'tools' => $toolSchemas,
+        ]);
+
+        // Emit thinking event
+        $this->emitEvent($onEvent, AgentEventType::THINKING, [
+            'iteration' => $iterations,
+        ]);
+
+        // Call LLM
+        $response = $this->llmClient->chat($fullMessages, $llmOptions);
+
+        // Parse response
+        $responseArray = $this->normalizeResponse($response);
+        $content = $responseArray['content'];
+        $toolCalls = $responseArray['tool_calls'] ?? [];
+        $usage = $responseArray['usage'] ?? [];
+
+        // Track token usage
+        $promptTokens = (int) ($usage['prompt_tokens'] ?? 0);
+        $completionTokens = (int) ($usage['completion_tokens'] ?? 0);
+        $totalPromptTokens += $promptTokens;
+        $totalCompletionTokens += $completionTokens;
+        $costBudget->consume($promptTokens, $completionTokens);
+
+        // Middleware — after LLM call
+        $this->middleware->afterLlmCall($responseArray, $usage);
+
+        // No tool calls → text response → done
+        if (empty($toolCalls)) {
+            $textContent = is_string($content) ? $content : (string) ($content ?? '');
+
+            // Phase 7: Output guardrail check
+            $outputGuardResult = $this->guardrailRunner->checkOutput($textContent);
+            if ($outputGuardResult !== null) {
+                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
+                    'type' => 'output',
+                    'name' => 'output_guard',
+                    'reason' => $outputGuardResult->reason,
+                ]);
+                return AgentResult::guardrailBlocked('output', $outputGuardResult->reason, $this->elapsedMs($startTime));
+            }
+
+            // Middleware — after loop
+            $result = AgentResult::complete(
+                content: $textContent,
+                iterations: $iterations,
+                elapsedMs: $this->elapsedMs($startTime),
+                promptTokens: $totalPromptTokens,
+                completionTokens: $totalCompletionTokens,
+                toolCalls: $totalToolCalls,
+            );
+
+            $result = $this->middleware->afterLoop($result);
+
+            $this->emitEvent($onEvent, AgentEventType::COMPLETE, [
+                'iterations' => $iterations,
+                'elapsed_ms' => $result->elapsedMs,
+                'prompt_tokens' => $totalPromptTokens,
+                'completion_tokens' => $totalCompletionTokens,
+            ]);
+
+            return $result;
+        }
+
+        // Tool calls — process each one
+        $totalToolCalls += count($toolCalls);
+
+        // Append assistant message with tool_calls
+        $fullMessages[] = [
+            'role' => 'assistant',
+            'content' => $content,
+            'tool_calls' => $toolCalls,
+        ];
+
+        foreach ($toolCalls as $toolCall) {
+            $callId = $toolCall['id'] ?? ('call_' . $iterations);
+            $toolName = $toolCall['function']['name'] ?? '';
+            $argumentsStr = $toolCall['function']['arguments'] ?? '{}';
+            $arguments = json_decode($argumentsStr, true) ?? [];
+
+            // Emit tool_call event
+            $this->emitEvent($onEvent, AgentEventType::TOOL_CALL, [
+                'call_id' => $callId,
+                'name' => $toolName,
+                'arguments' => $arguments,
+            ]);
+
+            // Dispatch tool through the chain
+            $toolResult = $this->dispatchTool($toolName, $arguments);
+
+            // Emit tool_result event
+            $this->emitEvent($onEvent, AgentEventType::TOOL_RESULT, [
+                'call_id' => $callId,
+                'name' => $toolName,
+                'result' => $toolResult,
+                'success' => true,
+            ]);
+
+            // Append tool result message
+            $fullMessages[] = [
+                'role' => 'tool',
+                'tool_call_id' => $callId,
+                'content' => $toolResult,
+            ];
+        }
+
+        return null; // Tool calls processed — continue loop
+    }
+
+    /**
+     * Dispatch a tool call through the chain:
+     * 1. Middleware beforeToolCall (interception)
+     * 2. Agent-level handler
+     * 3. ToolRegistry standard dispatch
+     */
+    private function dispatchTool(string $name, array $arguments): string
+    {
+        // Step 1: Middleware interception
+        $intercepted = $this->middleware->beforeToolCall($name, $arguments);
+        if ($intercepted !== null) {
+            $this->middleware->afterToolCall($name, $arguments, $intercepted);
+            return $intercepted;
+        }
+
+        // Step 2: Agent-level handler
+        if (isset($this->agentToolHandlers[$name])) {
+            try {
+                $result = ($this->agentToolHandlers[$name])($arguments);
+                $resultText = is_array($result) ? json_encode($result, JSON_UNESCAPED_UNICODE) : (string) $result;
+            } catch (\Throwable $e) {
+                $resultText = "工具执行错误 [{$name}]: " . $e->getMessage();
+            }
+            $this->middleware->afterToolCall($name, $arguments, $resultText);
+            return $resultText;
+        }
+
+        // Step 3: ToolRegistry dispatch
+        // Inject resolver into AskTool if applicable
+        if ($name === 'ask') {
+            try {
+                $tool = $this->toolRegistry->resolve($name);
+                if ($tool instanceof AskTool && $this->humanInputResolver !== null) {
+                    $tool->setResolver($this->humanInputResolver);
+                }
+            } catch (\InvalidArgumentException) {
+                // Tool not registered, fall through to execute() which handles the error
+            }
+        }
+
+        $executionResult = $this->toolRegistry->execute($name, $arguments);
+        $resultText = $executionResult->toText();
+        $this->middleware->afterToolCall($name, $arguments, $resultText);
+
+        return $resultText;
+    }
+
+    /**
+     * Resolve a Persona from agentConfig.
+     */
+    private function resolvePersona(array $agentConfig): Persona
+    {
+        $persona = $agentConfig['persona'] ?? null;
+
+        if ($persona instanceof Persona) {
+            return $persona;
+        }
+
+        if (is_array($persona)) {
+            return Persona::fromArray($persona);
+        }
+
+        if (is_string($persona) && $persona !== '') {
+            return Persona::fromMarkdown($persona);
+        }
+
+        // Default persona
+        return new Persona(
+            name: 'Assistant',
+            role: 'AI Assistant',
+            goal: 'Help the user',
+            backstory: '',
+        );
+    }
+
+    /**
+     * Normalize LLM response to array format.
+     */
+    private function normalizeResponse(string|array $response): array
+    {
+        if (is_string($response)) {
+            return [
+                'content' => $response,
+                'tool_calls' => [],
+                'usage' => [],
+            ];
+        }
+
+        return array_merge([
+            'content' => '',
+            'tool_calls' => [],
+            'usage' => [],
+        ], $response);
+    }
+
+    private function elapsedMs(int $startTime): int
+    {
+        return (int) ((hrtime(true) - $startTime) / 1_000_000);
+    }
+
+    /**
+     * Emit event to both internal listeners and external callback.
+     */
+    private function emitEvent(?callable $onEvent, AgentEventType $type, array $payload = []): void
+    {
+        // Internal EventEmitter
+        $this->emit($type, $payload);
+
+        // External callback
+        if ($onEvent !== null) {
+            $onEvent($type->value, $payload);
+        }
+    }
+}
