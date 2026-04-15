@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace ChenZhanjie\Agentic;
 
 use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
+use ChenZhanjie\Agentic\Contract\SessionStoreInterface;
 use ChenZhanjie\Agentic\Event\AgentEventType;
 use ChenZhanjie\Agentic\Event\EventEmitter;
 use ChenZhanjie\Agentic\Persona\Persona;
@@ -27,6 +28,7 @@ class Agentic
         private readonly AgentRunner $runner,
         private readonly ToolRegistry $toolRegistry,
         private readonly PromptBuilder $promptBuilder,
+        private readonly ?SessionStoreInterface $sessionStore = null,
         array $agentDefs = [],
         array $defaults = [],
     ) {
@@ -62,6 +64,34 @@ class Agentic
         $config = $this->getAgentConfig($agentName);
 
         return $this->runner->run($messages, $config, $options);
+    }
+
+    /**
+     * Execute a named agent with streaming (SSE events via onEvent callback).
+     */
+    public function runStream(string $agentName, array $messages, ?callable $onEvent = null, array $options = []): AgentResult
+    {
+        $config = $this->getAgentConfig($agentName);
+
+        return $this->runner->run($messages, $config, $options, $onEvent);
+    }
+
+    /**
+     * Pure LLM streaming chat — forwards chunks to onChunk callback.
+     */
+    public function chatStream(array $messages, callable $onChunk, array $options = []): void
+    {
+        $config = array_merge(
+            $this->defaults,
+            $this->agentDefs['__llm__'] ?? [],
+        );
+
+        $llmOptions = [
+            'provider' => $config['provider'] ?? null,
+            'model' => $options['model_override'] ?? $config['model'] ?? null,
+        ];
+
+        $this->runner->chatStream($messages, $llmOptions, $onChunk);
     }
 
     /**
@@ -119,6 +149,24 @@ class Agentic
     public function setHumanInputResolver(HumanInputResolverInterface $resolver): void
     {
         $this->runner->setHumanInputResolver($resolver);
+    }
+
+    /**
+     * Resume a suspended agent session.
+     */
+    public function resume(string $sessionId): AgentResult
+    {
+        if ($this->sessionStore === null) {
+            throw new \RuntimeException('SessionStore not configured');
+        }
+
+        $state = $this->sessionStore->getAndDelete($sessionId, 'suspended_agent');
+
+        if (empty($state) || !isset($state['messages'])) {
+            throw new \RuntimeException("Session {$sessionId} not found or expired");
+        }
+
+        return $this->runner->resume($state, $sessionId);
     }
 
     /**

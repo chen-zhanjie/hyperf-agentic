@@ -50,6 +50,14 @@ class AgentRunner
     }
 
     /**
+     * Stream LLM chat chunks directly — no agent loop, passthrough to LlmClient.
+     */
+    public function chatStream(array $messages, array $options, callable $onChunk): void
+    {
+        $this->llmClient->chatStream($messages, $options, $onChunk);
+    }
+
+    /**
      * Resume a suspended agent session.
      * Restores state from SessionStore and continues the conversation loop.
      *
@@ -499,6 +507,13 @@ class AgentRunner
             $argumentsStr = $toolCall['function']['arguments'] ?? '{}';
             $arguments = json_decode($argumentsStr, true) ?? [];
 
+            // Parallel enforcement: if tool is non-parallel and there are other
+            // tool calls in this batch, only process this one and return to loop
+            if (count($toolCalls) > 1 && !$this->isToolParallelAllowed($toolName)) {
+                $toolCalls = [$toolCall]; // only process this one
+                break;
+            }
+
             // Emit tool_call event
             $this->emitEvent($onEvent, AgentEventType::TOOL_CALL, [
                 'call_id' => $callId,
@@ -626,6 +641,19 @@ class AgentRunner
     private function elapsedMs(int $startTime): int
     {
         return (int) ((hrtime(true) - $startTime) / 1_000_000);
+    }
+
+    /**
+     * Check if a tool allows parallel execution.
+     */
+    private function isToolParallelAllowed(string $toolName): bool
+    {
+        try {
+            $tool = $this->toolRegistry->resolve($toolName);
+            return $tool->isParallelAllowed();
+        } catch (\InvalidArgumentException) {
+            return true; // Unknown tools default to parallel-allowed
+        }
     }
 
     /**

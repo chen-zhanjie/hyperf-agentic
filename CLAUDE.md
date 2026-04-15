@@ -105,7 +105,16 @@ See [plan](.claude/plans/agent-sdk-refactor.md) for full design.
 - AgentChatCommand (Symfony Console: interactive loop, --no-input, --model, /quit)
 - **289 tests, 526 assertions**
 
-### Remaining: Project Integration — PENDING
-- Deploy config/autoload/agentic/ configuration directory
+### Phase 6: Integration & Completion — COMPLETE
+- AnnotationToolLoader (#[AsTool] annotation scanning → ToolRegistry)
+- AgentConfigManager (config merge: defaults → agent def → runtime)
+- ToolRegistryFactory + SkillRegistryFactory (Hyperf DI startup factories)
+- ConfigProvider (15+ dependency bindings)
+- Agentic::resume() (session-based suspended agent recovery)
+- Agentic::runStream() + chatStream() (streaming support)
+- Parallel enforcement (isParallelAllowed check in AgentRunner)
+- Publish templates (session.php, cli.php, souls/chat.md)
+- **341 tests, 596 assertions**
+
+### Remaining: Project-Specific Migration — PENDING
 - Migrate project-specific controllers and tools to use SDK
-- Streaming support (runStream, chatStream)
