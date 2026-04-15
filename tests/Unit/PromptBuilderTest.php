@@ -27,9 +27,9 @@ class PromptBuilderTest extends TestCase
         };
     }
 
-    private function makePersona(string $name = 'Test', string $role = 'You are a tester.'): Persona
+    private function makePersona(string $name = 'Test', string $content = 'You are a tester.'): Persona
     {
-        return new Persona(name: $name, role: $role);
+        return new Persona(name: $name, content: $content);
     }
 
     // --- Cached prompt ---
@@ -37,7 +37,7 @@ class PromptBuilderTest extends TestCase
     public function testBuildCachedPromptIncludesPersona(): void
     {
         $builder = new PromptBuilder();
-        $persona = $this->makePersona('ChatBot', 'You help users.');
+        $persona = new Persona(name: 'ChatBot', content: '# ChatBot\n\nYou help users.');
         $tools = new ToolRegistry();
 
         $cached = $builder->buildCachedPrompt($persona, 'chat', $tools);
@@ -213,12 +213,12 @@ class PromptBuilderTest extends TestCase
     public function testBuildCombinesCachedAndEphemeral(): void
     {
         $builder = new PromptBuilder();
-        $persona = $this->makePersona('Bot', 'I help.');
+        $persona = new Persona(name: 'Bot', content: 'I help.');
         $tools = new ToolRegistry();
 
         $full = $builder->build($persona, 'test', $tools, runtimeContext: ['key' => 'val']);
 
-        $this->assertStringContainsString('# Bot', $full);
+        $this->assertStringContainsString('I help.', $full);
         $this->assertStringContainsString('当前时间:', $full);
         $this->assertStringContainsString('key: val', $full);
     }
@@ -254,16 +254,16 @@ class PromptBuilderTest extends TestCase
     public function testRebuildAfterResetProducesNewPrompt(): void
     {
         $builder = new PromptBuilder();
-        $persona = $this->makePersona('First');
+        $persona = new Persona(name: 'First', content: 'First persona content.');
         $tools = new ToolRegistry();
 
         $first = $builder->build($persona, 'test', $tools);
         $builder->reset();
 
-        $newPersona = $this->makePersona('Second');
+        $newPersona = new Persona(name: 'Second', content: 'Second persona content.');
         $second = $builder->build($newPersona, 'test', $tools);
 
-        $this->assertStringContainsString('First', $first);
-        $this->assertStringContainsString('Second', $second);
+        $this->assertStringContainsString('First persona content.', $first);
+        $this->assertStringContainsString('Second persona content.', $second);
     }
 }

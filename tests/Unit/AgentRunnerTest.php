@@ -782,9 +782,7 @@ class AgentRunnerTest extends TestCase
             'max_iterations' => $maxIterations,
             'persona' => new Persona(
                 name: 'Test',
-                role: 'Test Assistant',
-                goal: 'Help with tests',
-                backstory: 'A test assistant',
+                content: 'You are a test assistant.',
             ),
             'system_prompt' => '',
             'tools' => [],

@@ -621,9 +621,7 @@ class AgentRunner
         // Default persona
         return new Persona(
             name: 'Assistant',
-            role: 'AI Assistant',
-            goal: 'Help the user',
-            backstory: '',
+            content: 'You are a helpful AI assistant.',
         );
     }
 

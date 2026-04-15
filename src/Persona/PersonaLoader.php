@@ -23,9 +23,9 @@ class PersonaLoader
             return $this->loadFromMarkdownFile($personaConfig);
         }
 
-        // 2. Plain string — use as role
+        // 2. Plain string — use as content
         if (is_string($personaConfig)) {
-            return new Persona(name: 'assistant', role: $personaConfig);
+            return new Persona(name: 'assistant', content: $personaConfig);
         }
 
         // 3. Array config
@@ -67,6 +67,6 @@ class PersonaLoader
         if (file_exists($defaultPath)) {
             return Persona::fromMarkdownFile($defaultPath);
         }
-        return new Persona(name: 'assistant', role: 'You are a helpful AI assistant.');
+        return new Persona(name: 'assistant', content: 'You are a helpful AI assistant.');
     }
 }

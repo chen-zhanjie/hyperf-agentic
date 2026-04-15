@@ -17,99 +17,64 @@ class PersonaTest extends TestCase
         $this->assertSame('My Agent', $persona->name);
     }
 
-    public function testFromMarkdownParsesStringSections(): void
+    public function testFromMarkdownStoresRawContent(): void
     {
         $md = <<<MD
 # Helper
 
-## Role
 You are a helpful assistant.
-
-## Goal
 Answer questions accurately.
-
-## Tone
-Friendly and professional.
 MD;
         $persona = Persona::fromMarkdown($md);
         $this->assertSame('Helper', $persona->name);
-        // Freeform: entire raw content is stored as-is
-        $this->assertSame(trim($md), $persona->freeform);
-        // Structured fields are not populated from markdown (freeform takes priority)
+        $this->assertSame(trim($md), $persona->content);
     }
 
-    public function testFromMarkdownParsesArraySections(): void
+    public function testFromMarkdownPreservesUnknownSections(): void
     {
         $md = <<<MD
-# Dev Agent
+# Coder
 
-## Principles
-- Always write tests
-- Keep functions small
+## Custom Section
+This would be lost before, but now preserved.
 
-## Expertise
-- PHP
-- TypeScript
-
-## Boundaries
-- Never delete data
-
-## Communication Style
-- Be concise
-- Use code examples
+## Another Section
+More content here.
 MD;
         $persona = Persona::fromMarkdown($md);
-        // Freeform: entire raw content stored as-is
-        $this->assertSame(trim($md), $persona->freeform);
+        $this->assertStringContainsString('Custom Section', $persona->content);
+        $this->assertStringContainsString('This would be lost', $persona->content);
+        $this->assertStringContainsString('Another Section', $persona->content);
     }
 
-    public function testFromMarkdownWithMultilineSection(): void
+    public function testFromMarkdownWithMultilineContent(): void
     {
         $md = <<<MD
 # Agent
 
-## Backstory
 Line one.
 Line two.
 Line three.
 MD;
         $persona = Persona::fromMarkdown($md);
-        // Freeform preserves all content
-        $this->assertStringContainsString('Line one.', $persona->freeform);
-        $this->assertStringContainsString('Line two.', $persona->freeform);
-        $this->assertStringContainsString('Line three.', $persona->freeform);
+        $this->assertStringContainsString('Line one.', $persona->content);
+        $this->assertStringContainsString('Line two.', $persona->content);
+        $this->assertStringContainsString('Line three.', $persona->content);
     }
 
     public function testFromMarkdownReturnsDefaultsForEmptyInput(): void
     {
         $persona = Persona::fromMarkdown('');
         $this->assertSame('', $persona->name);
-        $this->assertSame('', $persona->freeform);
+        $this->assertSame('', $persona->content);
     }
 
-    public function testFromMarkdownFreeformIsRawContent(): void
+    public function testFromMarkdownContentIsRawMarkdown(): void
     {
         $md = "# Support Bot\n\nYou are a helpful support agent.\nAlways be polite and concise.";
         $persona = Persona::fromMarkdown($md);
         $this->assertSame('Support Bot', $persona->name);
-        $this->assertSame($md, $persona->freeform);
-    }
-
-    public function testFromMarkdownFreeformPreservesUnknownSections(): void
-    {
-        $md = <<<MD
-# Coder
-
-## Custom Section
-This would be lost before, but now preserved in freeform.
-
-## Another Section
-More content here.
-MD;
-        $persona = Persona::fromMarkdown($md);
-        $this->assertStringContainsString('Custom Section', $persona->freeform);
-        $this->assertStringContainsString('This would be lost', $persona->freeform);
-        $this->assertStringContainsString('Another Section', $persona->freeform);
+        $this->assertSame($md, $persona->content);
     }
 
     // --- fromArray ---
@@ -118,63 +83,32 @@ MD;
     {
         $config = [
             'name' => 'Test Agent',
-            'role' => 'Tester',
-            'goal' => 'Test everything',
-            'principles' => ['First', 'Second'],
-            'freeform' => 'Raw prompt text',
+            'content' => 'You are a testing assistant.',
         ];
         $persona = Persona::fromArray($config);
         $this->assertSame('Test Agent', $persona->name);
-        $this->assertSame('Tester', $persona->role);
-        $this->assertSame('Test everything', $persona->goal);
-        $this->assertSame(['First', 'Second'], $persona->principles);
-        $this->assertSame('Raw prompt text', $persona->freeform);
-        $this->assertSame([], $persona->expertise);
+        $this->assertSame('You are a testing assistant.', $persona->content);
     }
 
     public function testFromArrayHandlesEmptyArray(): void
     {
         $persona = Persona::fromArray([]);
         $this->assertSame('', $persona->name);
-        $this->assertSame('', $persona->role);
-        $this->assertSame([], $persona->principles);
+        $this->assertSame('', $persona->content);
     }
 
     // --- toPromptText ---
 
-    public function testToPromptTextIncludesAllNonEmptySections(): void
+    public function testToPromptTextReturnsContentWhenSet(): void
     {
-        // Structured fields (fromArray path) reconstruct the prompt with name as H1
-        $persona = new Persona(
-            name: 'Test',
-            role: 'You are a tester.',
-            goal: 'Test all the things.',
-            principles: ['Write tests first', 'Keep coverage high'],
-        );
-        $text = $persona->toPromptText();
-        $this->assertStringContainsString('# Test', $text);
-        $this->assertStringContainsString('## Role', $text);
-        $this->assertStringContainsString('You are a tester.', $text);
-        $this->assertStringContainsString('## Goal', $text);
-        $this->assertStringContainsString('Test all the things.', $text);
-        $this->assertStringContainsString('## Principles', $text);
-        $this->assertStringContainsString('- Write tests first', $text);
-        // Empty sections are omitted
-        $this->assertStringNotContainsString('## Backstory', $text);
-        $this->assertStringNotContainsString('## Tone', $text);
+        $persona = new Persona(name: 'Bot', content: 'You are a friendly bot.');
+        $this->assertSame('You are a friendly bot.', $persona->toPromptText());
     }
 
-    public function testToPromptTextFreeformTakesPriority(): void
+    public function testToPromptTextReturnsNameAsH1WhenOnlyNameGiven(): void
     {
-        $persona = new Persona(
-            name: 'Test',
-            role: 'Structured role',
-            freeform: 'Free-form prompt content, used as-is.',
-        );
-        $text = $persona->toPromptText();
-        $this->assertSame('Free-form prompt content, used as-is.', $text);
-        // Structured fields are NOT used when freeform is present
-        $this->assertStringNotContainsString('Structured role', $text);
+        $persona = new Persona(name: 'Assistant');
+        $this->assertSame('# Assistant', $persona->toPromptText());
     }
 
     public function testToPromptTextReturnsEmptyForCompletelyEmptyPersona(): void
@@ -183,23 +117,11 @@ MD;
         $this->assertSame('', $persona->toPromptText());
     }
 
-    public function testToPromptTextIncludesNameWhenOnlyNameGiven(): void
+    public function testToPromptTextContentTakesPriorityOverName(): void
     {
-        $persona = new Persona(name: 'Empty');
-        $this->assertSame('# Empty', $persona->toPromptText());
-    }
-
-    public function testToPromptTextFormatsArraySectionsAsLists(): void
-    {
-        $persona = new Persona(
-            name: 'Test',
-            expertise: ['PHP', 'Go'],
-            boundaries: ['No production access'],
-        );
+        $persona = new Persona(name: 'Bot', content: '# Bot\n\nCustom content here.');
         $text = $persona->toPromptText();
-        $this->assertStringContainsString('- PHP', $text);
-        $this->assertStringContainsString('- Go', $text);
-        $this->assertStringContainsString('- No production access', $text);
+        $this->assertSame('# Bot\n\nCustom content here.', $text);
     }
 
     // --- fromMarkdownFile ---
@@ -224,7 +146,7 @@ MD;
 
     public function testPersonaIsReadOnly(): void
     {
-        $persona = new Persona(name: 'Test', role: 'Role');
+        $persona = new Persona(name: 'Test', content: 'Some content');
         $this->assertTrue(true); // readonly properties enforced by PHP engine
     }
 }

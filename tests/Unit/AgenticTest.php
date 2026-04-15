@@ -31,7 +31,7 @@ class AgenticTest extends TestCase
             promptBuilder: new PromptBuilder(),
             agentDefs: [
                 'general' => [
-                    'persona' => new Persona(name: 'General', role: 'Assistant', goal: 'Help', backstory: ''),
+                    'persona' => new Persona(name: 'General', content: 'You are a helpful assistant.'),
                     'max_iterations' => 5,
                 ],
             ],
@@ -54,7 +54,7 @@ class AgenticTest extends TestCase
             promptBuilder: new PromptBuilder(),
             agentDefs: [
                 'test-agent' => [
-                    'persona' => new Persona(name: 'TestBot', role: 'Tester', goal: 'Test', backstory: ''),
+                    'persona' => new Persona(name: 'TestBot', content: 'You are a test bot.'),
                     'max_iterations' => 5,
                     'system_prompt' => 'You are a test bot',
                 ],
@@ -152,7 +152,7 @@ class AgenticTest extends TestCase
 
     public function testPersonaReturnsAgentPersona(): void
     {
-        $persona = new Persona(name: 'ChatBot', role: 'Chat', goal: 'Chat well', backstory: 'Test');
+        $persona = new Persona(name: 'ChatBot', content: 'You are a chat bot.');
         $agentic = $this->createDefaultAgentic(agentDefs: [
             'chat' => ['persona' => $persona],
         ]);
