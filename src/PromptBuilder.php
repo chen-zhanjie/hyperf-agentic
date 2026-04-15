@@ -43,7 +43,7 @@ class PromptBuilder
         // Layer 1: Persona
         $personaText = $persona->toPromptText();
         if ($personaText !== '') {
-            $layers[] = "# Agent: {$persona->name}\n\n{$personaText}";
+            $layers[] = $personaText;
         }
 
         // Layer 2: SDK base prompt

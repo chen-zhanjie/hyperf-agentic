@@ -42,7 +42,7 @@ class PromptBuilderTest extends TestCase
 
         $cached = $builder->buildCachedPrompt($persona, 'chat', $tools);
 
-        $this->assertStringContainsString('Agent: ChatBot', $cached);
+        $this->assertStringContainsString('# ChatBot', $cached);
         $this->assertStringContainsString('You help users.', $cached);
     }
 
@@ -218,7 +218,7 @@ class PromptBuilderTest extends TestCase
 
         $full = $builder->build($persona, 'test', $tools, runtimeContext: ['key' => 'val']);
 
-        $this->assertStringContainsString('Agent: Bot', $full);
+        $this->assertStringContainsString('# Bot', $full);
         $this->assertStringContainsString('当前时间:', $full);
         $this->assertStringContainsString('key: val', $full);
     }

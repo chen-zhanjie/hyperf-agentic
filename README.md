@@ -56,8 +56,8 @@ Edit `config/autoload/agentic/agents.php`:
 
 ```php
 return [
-    'general' => [
-        'persona'        => 'chat.md',
+    'default' => [
+        'persona'        => 'default.md',
         'tools'          => ['*'],
         'max_iterations' => 10,
     ],
@@ -73,7 +73,7 @@ use ChenZhanjie\Agentic\Agentic;
 $agentic = $this->container->get(Agentic::class);
 
 // Run an agent
-$result = $agentic->run('general', [
+$result = $agentic->run('default', [
     ['role' => 'user', 'content' => 'Hello!'],
 ]);
 
@@ -86,10 +86,10 @@ echo $result->content;
 
 ```php
 // Execute a named agent (full loop with tools)
-$result = $agentic->run('general', $messages, $options);
+$result = $agentic->run('default', $messages, $options);
 
 // Execute with SSE streaming
-$result = $agentic->runStream('general', $messages, function (string $type, array $payload) {
+$result = $agentic->runStream('default', $messages, function (string $type, array $payload) {
     echo "event: {$type}\ndata: " . json_encode($payload) . "\n\n";
 });
 
@@ -114,8 +114,8 @@ $result = $agentic->resume($sessionId);
 ```php
 $agentic->agents();          // List all defined agent names
 $agentic->tools();           // List all registered tool names
-$agentic->has('general');    // Check if an agent exists
-$agentic->persona('general'); // Get the persona for an agent
+$agentic->has('default');    // Check if an agent exists
+$agentic->persona('default'); // Get the persona for an agent
 ```
 
 ## AgentResult
@@ -181,26 +181,37 @@ return [
 
 ## Personas (SOUL.md)
 
-Personas define agent personality and behavior. Place markdown files in `config/autoload/agentic/souls/`:
+Personas define agent personality and behavior. Place markdown files in `config/autoload/agentic/souls/`.
+
+**The markdown file IS the system prompt** — write whatever you want, no format restrictions.
 
 ```markdown
 # Support Agent
 
-## Role
-You are a customer support specialist.
+You are a customer support specialist for our SaaS platform.
+Your goal is to resolve user issues quickly and accurately.
 
-## Goal
-Resolve user issues quickly and accurately.
+## Guidelines
 
-## Communication Style
-- Be empathetic and professional
-- Ask clarifying questions when needed
+- Always greet the user before answering
+- Ask clarifying questions when the request is ambiguous
+- Escalate to a human if you're unsure
+
+## Tone
+
+Professional but warm. Use the user's first name if provided.
 ```
+
+**Best practices:**
+- Start with `# Agent Name` as the H1 — this is extracted as the agent's display name
+- Use `##` headings to organize sections — helps both you and the LLM navigate the prompt
+- Keep it concise: long prompts increase token cost and reduce instruction-following accuracy
+- Be specific: "respond in under 100 words" > "be brief"
 
 Reference in agent config:
 
 ```php
-'general' => [
+'default' => [
     'persona' => 'support.md', // matches souls/support.md
 ],
 ```

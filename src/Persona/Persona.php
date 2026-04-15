@@ -15,6 +15,7 @@ class Persona
         public readonly array $expertise = [],
         public readonly array $boundaries = [],
         public readonly array $communication = [],
+        public readonly string $freeform = '',
     ) {}
 
     public static function fromMarkdownFile(string $path): self
@@ -26,59 +27,22 @@ class Persona
         return self::fromMarkdown($content);
     }
 
+    /**
+     * Parse markdown into Persona.
+     * Extracts name from H1, stores the entire raw content as freeform.
+     * Structured fields are populated for backward compatibility with fromArray().
+     */
     public static function fromMarkdown(string $content): self
     {
-        $lines = explode("\n", $content);
+        // Extract name from first H1
         $name = '';
-        $currentSection = '';
-        $sections = [
-            'role' => '', 'goal' => '', 'backstory' => '',
-            'tone' => '', 'principles' => [], 'expertise' => [],
-            'boundaries' => [], 'communication' => [],
-        ];
-
-        foreach ($lines as $line) {
-            // H1 = agent name
-            if (preg_match('/^#\s+(.+)$/', $line, $m)) {
-                $name = trim($m[1]);
-                continue;
-            }
-            // H2 = section
-            if (preg_match('/^##\s+(.+)$/', $line, $m)) {
-                $currentSection = strtolower(trim($m[1]));
-                // Normalize section names
-                $currentSection = match ($currentSection) {
-                    'communication style' => 'communication',
-                    default => $currentSection,
-                };
-                continue;
-            }
-            // List items within array sections
-            if ($currentSection !== '' && preg_match('/^-\s+(.+)$/', $line, $m)) {
-                $value = trim($m[1]);
-                if (in_array($currentSection, ['principles', 'expertise', 'boundaries', 'communication'])) {
-                    $sections[$currentSection][] = $value;
-                }
-                continue;
-            }
-            // Text within string sections
-            if ($currentSection !== '' && trim($line) !== '' && !str_starts_with($line, '#')) {
-                if (in_array($currentSection, ['role', 'goal', 'backstory', 'tone'])) {
-                    $sections[$currentSection] .= ($sections[$currentSection] !== '' ? "\n" : '') . trim($line);
-                }
-            }
+        if (preg_match('/^#\s+(.+)$/m', $content, $m)) {
+            $name = trim($m[1]);
         }
 
         return new self(
             name: $name,
-            role: $sections['role'],
-            goal: $sections['goal'],
-            backstory: $sections['backstory'],
-            tone: $sections['tone'],
-            principles: $sections['principles'],
-            expertise: $sections['expertise'],
-            boundaries: $sections['boundaries'],
-            communication: $sections['communication'],
+            freeform: trim($content),
         );
     }
 
@@ -94,12 +58,23 @@ class Persona
             expertise: $config['expertise'] ?? [],
             boundaries: $config['boundaries'] ?? [],
             communication: $config['communication'] ?? [],
+            freeform: $config['freeform'] ?? '',
         );
     }
 
     public function toPromptText(): string
     {
+        // Freeform: raw markdown, used as-is (already includes H1)
+        if ($this->freeform !== '') {
+            return $this->freeform;
+        }
+
+        // Structured: reconstruct from fields with agent name as H1
         $parts = [];
+
+        if ($this->name !== '') {
+            $parts[] = "# {$this->name}";
+        }
 
         if ($this->role !== '') {
             $parts[] = "## Role\n{$this->role}";

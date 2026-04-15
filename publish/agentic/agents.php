@@ -6,8 +6,8 @@ declare(strict_types=1);
  * 复制到 config/autoload/agentic/agents.php 并定义你的 Agents。
  */
 return [
-    'general' => [
-        'persona' => 'general.md',
+    'default' => [
+        'persona' => 'default.md',
         'tools' => ['*'],
         'skills' => [],
         'guardrails' => [],

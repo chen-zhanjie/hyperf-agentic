@@ -56,8 +56,8 @@ return [
 
 ```php
 return [
-    'general' => [
-        'persona'        => 'chat.md',
+    'default' => [
+        'persona'        => 'default.md',
         'tools'          => ['*'],
         'max_iterations' => 10,
     ],
@@ -73,7 +73,7 @@ use ChenZhanjie\Agentic\Agentic;
 $agentic = $this->container->get(Agentic::class);
 
 // 执行 Agent
-$result = $agentic->run('general', [
+$result = $agentic->run('default', [
     ['role' => 'user', 'content' => '你好！'],
 ]);
 
@@ -86,10 +86,10 @@ echo $result->content;
 
 ```php
 // 执行指定 Agent（完整循环 + 工具调用）
-$result = $agentic->run('general', $messages, $options);
+$result = $agentic->run('default', $messages, $options);
 
 // SSE 流式执行
-$result = $agentic->runStream('general', $messages, function (string $type, array $payload) {
+$result = $agentic->runStream('default', $messages, function (string $type, array $payload) {
     echo "event: {$type}\ndata: " . json_encode($payload) . "\n\n";
 });
 
@@ -114,8 +114,8 @@ $result = $agentic->resume($sessionId);
 ```php
 $agentic->agents();           // 获取所有已定义的 Agent 名称
 $agentic->tools();            // 获取所有已注册的工具名称
-$agentic->has('general');     // 检查 Agent 是否存在
-$agentic->persona('general'); // 获取 Agent 的人设
+$agentic->has('default');     // 检查 Agent 是否存在
+$agentic->persona('default'); // 获取 Agent 的人设
 ```
 
 ## AgentResult
@@ -181,26 +181,37 @@ return [
 
 ## 人设（SOUL.md）
 
-人设定义 Agent 的性格和行为方式。将 Markdown 文件放在 `config/autoload/agentic/souls/` 下：
+人设定义 Agent 的性格和行为方式。将 Markdown 文件放在 `config/autoload/agentic/souls/` 下。
+
+**Markdown 文件就是系统提示词** — 随意书写，无格式限制。
 
 ```markdown
 # 客服助手
 
-## 角色定位
-你是一名专业的客户支持专员。
+你是一名专业的客户支持专员，负责我们 SaaS 平台的用户支持。
+目标是快速准确地解决用户问题。
 
-## 目标
-快速准确地解决用户问题。
+## 工作准则
 
-## 沟通风格
-- 保持同理心和专业性
-- 必要时主动追问以明确需求
+- 回答前先问候用户
+- 需求不明确时主动追问
+- 不确定时转交人工处理
+
+## 语气
+
+专业而温暖。如果用户提供了姓名，请使用称呼。
 ```
+
+**最佳实践：**
+- 以 `# Agent 名称` 作为 H1 — 会被提取为 Agent 的显示名称
+- 用 `##` 标题组织段落 — 方便你自己和 LLM 导航提示词
+- 保持简洁：过长的提示词增加 Token 成本，降低指令遵从准确度
+- 具体明确："100 字以内回复" > "简洁回答"
 
 在 Agent 配置中引用：
 
 ```php
-'general' => [
+'default' => [
     'persona' => 'support.md', // 对应 souls/support.md
 ],
 ```
