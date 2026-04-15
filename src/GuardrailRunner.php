@@ -7,23 +7,39 @@ use ChenZhanjie\Agentic\Contract\GuardrailInterface;
 
 class GuardrailRunner
 {
-    /** @var GuardrailInterface[] */
-    private array $guardrails = [];
+    /** @var GuardrailEntry[] */
+    private array $entries = [];
 
-    public function register(GuardrailInterface $guardrail): void
-    {
-        $this->guardrails[] = $guardrail;
+    public function register(
+        GuardrailInterface $guardrail,
+        GuardrailMode $mode = GuardrailMode::SYNC,
+    ): void {
+        $this->entries[] = new GuardrailEntry($guardrail, $mode);
     }
 
     /**
      * Load guardrails from class names, replacing any previously registered.
      *
-     * @param array<class-string<GuardrailInterface>> $guardrailClasses
+     * Supports two formats:
+     *   - String: '\SomeGuardrail' → SYNC mode
+     *   - Array:  ['class' => '\SomeGuardrail', 'mode' => 'async'] → explicit mode
+     *
+     * @param array<class-string<GuardrailInterface>|array{class?: string, mode?: string}> $guardrailConfigs
      */
-    public function loadFromConfig(array $guardrailClasses): void
+    public function loadFromConfig(array $guardrailConfigs): void
     {
-        $this->guardrails = [];
-        foreach ($guardrailClasses as $className) {
+        $this->entries = [];
+        foreach ($guardrailConfigs as $config) {
+            if (is_string($config)) {
+                $className = $config;
+                $mode = GuardrailMode::SYNC;
+            } else {
+                $className = $config['class'] ?? '';
+                $mode = ($config['mode'] ?? 'sync') === 'async'
+                    ? GuardrailMode::ASYNC
+                    : GuardrailMode::SYNC;
+            }
+
             if (!class_exists($className)) {
                 continue;
             }
@@ -32,19 +48,17 @@ class GuardrailRunner
                     "Class [{$className}] does not implement GuardrailInterface"
                 );
             }
-            $this->guardrails[] = new $className();
+            $this->entries[] = new GuardrailEntry(new $className(), $mode);
         }
     }
 
     /**
-     * Run all input guardrails. Returns the first tripped result, or null if all pass.
-     *
-     * @param array $messages Conversation messages
+     * Run all input guardrails synchronously. Returns the first tripped result, or null if all pass.
      */
     public function checkInput(array $messages): ?GuardrailResult
     {
-        foreach ($this->guardrails as $guardrail) {
-            $result = $guardrail->checkInput($messages);
+        foreach ($this->entries as $entry) {
+            $result = $entry->guardrail->checkInput($messages);
             if ($result->tripwire) {
                 return $result;
             }
@@ -53,17 +67,71 @@ class GuardrailRunner
     }
 
     /**
-     * Run all output guardrails. Returns the first tripped result, or null if all pass.
+     * Run all output guardrails synchronously. Returns the first tripped result, or null if all pass.
      */
     public function checkOutput(string $content): ?GuardrailResult
     {
-        foreach ($this->guardrails as $guardrail) {
-            $result = $guardrail->checkOutput($content);
+        foreach ($this->entries as $entry) {
+            $result = $entry->guardrail->checkOutput($content);
             if ($result->tripwire) {
                 return $result;
             }
         }
         return null;
+    }
+
+    /**
+     * Run input guardrails with async support. SYNC entries execute immediately;
+     * ASYNC entries are dispatched to coroutines (if Swoole is available) or
+     * fall back to synchronous execution.
+     */
+    public function checkInputAsync(array $messages): AsyncGuardrailContext
+    {
+        $ctx = new AsyncGuardrailContext('input');
+
+        foreach ($this->entries as $entry) {
+            if ($entry->mode === GuardrailMode::SYNC) {
+                $result = $entry->guardrail->checkInput($messages);
+                if ($result->tripwire) {
+                    $ctx->setSyncResult($result);
+                    break;
+                }
+            } else {
+                $this->dispatchAsync(
+                    $ctx,
+                    $entry->guardrail->name(),
+                    fn () => $entry->guardrail->checkInput($messages),
+                );
+            }
+        }
+
+        return $ctx;
+    }
+
+    /**
+     * Run output guardrails with async support. Same semantics as checkInputAsync.
+     */
+    public function checkOutputAsync(string $content): AsyncGuardrailContext
+    {
+        $ctx = new AsyncGuardrailContext('output');
+
+        foreach ($this->entries as $entry) {
+            if ($entry->mode === GuardrailMode::SYNC) {
+                $result = $entry->guardrail->checkOutput($content);
+                if ($result->tripwire) {
+                    $ctx->setSyncResult($result);
+                    break;
+                }
+            } else {
+                $this->dispatchAsync(
+                    $ctx,
+                    $entry->guardrail->name(),
+                    fn () => $entry->guardrail->checkOutput($content),
+                );
+            }
+        }
+
+        return $ctx;
     }
 
     /**
@@ -79,10 +147,55 @@ class GuardrailRunner
         }
 
         $filtered = clone $this;
-        $filtered->guardrails = array_filter(
-            $this->guardrails,
-            fn(GuardrailInterface $g) => in_array($g->name(), $names, true),
+        $filtered->entries = array_filter(
+            $this->entries,
+            fn(GuardrailEntry $e) => in_array($e->guardrail->name(), $names, true),
         );
         return $filtered;
+    }
+
+    /**
+     * Return a new runner with mode overrides applied by guardrail name.
+     *
+     * @param array<string, GuardrailMode> $modes Map of guardrail name → mode
+     */
+    public function withModes(array $modes): self
+    {
+        $runner = clone $this;
+        $runner->entries = array_map(
+            function (GuardrailEntry $entry) use ($modes): GuardrailEntry {
+                $name = $entry->guardrail->name();
+                if (isset($modes[$name])) {
+                    return new GuardrailEntry($entry->guardrail, $modes[$name]);
+                }
+                return $entry;
+            },
+            $this->entries,
+        );
+        return $runner;
+    }
+
+    /**
+     * Dispatch an async guardrail check — uses Swoole coroutine if available,
+     * otherwise falls back to synchronous execution.
+     */
+    private function dispatchAsync(
+        AsyncGuardrailContext $ctx,
+        string $name,
+        callable $check,
+    ): void {
+        $handle = new AsyncGuardrailHandle();
+        $ctx->addHandle($handle, $name);
+
+        if (class_exists(\Swoole\Coroutine::class)) {
+            \Swoole\Coroutine::create(function () use ($handle, $check): void {
+                $result = $check();
+                $handle->complete($result->tripwire ? $result : null);
+            });
+        } else {
+            // No Swoole — execute synchronously
+            $result = $check();
+            $handle->complete($result->tripwire ? $result : null);
+        }
     }
 }

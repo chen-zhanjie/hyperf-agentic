@@ -1,18 +1,29 @@
 # Guardrails
 
-Guardrails are safety check mechanisms that run within the agent loop, split into **input checks** and **output checks**.
+Guardrails are safety check mechanisms that run within the agent loop, split into **input checks** and **output checks**. They support both **synchronous** and **asynchronous** modes.
 
 ## Workflow
 
+### Sync Guardrails (default)
+
 ```
-User Message → [Input Guardrail Check] → Agent Loop → [Output Guardrail Check] → Return Result
-                    ↓                                        ↓
-               Blocked → Return Error                  Blocked → Return Error
+User Message → [Sync Input Guardrails] → Agent Loop → [Sync Output Guardrails] → Return Result
+                      ↓                                          ↓
+                 Blocked → Return Error                      Blocked → Return Error
 ```
 
-- **Input check**: Runs before the agent loop starts, validating user messages
-- **Output check**: Runs after each LLM response, validating output content
-- First blocked result stops execution — subsequent guardrails are not run
+### Async Guardrails (Swoole)
+
+```
+User Message → [Sync Input Guardrails] ──────────→ Agent Loop ──→ [Sync Output Guardrails] ──→ Return Result
+              [Async Input Guardrails ──→ running]                  [Async Output Guardrails ──→ running]
+                      ↓ (completes during loop)                              ↓ (completes after output)
+                  Blocked → Recall Event                              Blocked → COMPLETE → GUARDRAIL_RECALLED
+```
+
+- **Sync guardrails**: Block execution immediately, content never reaches the client
+- **Async guardrails**: Run in background coroutines; content is emitted first, then recalled if blocked
+- **Graceful degradation**: Without Swoole, async guardrails fall back to synchronous execution
 
 ## GuardrailInterface
 
@@ -37,6 +48,56 @@ GuardrailResult::ok();
 GuardrailResult::blocked('Contains sensitive information');
 ```
 
+## Guardrail Modes
+
+Each guardrail can be configured as **sync** or **async**:
+
+```php
+use ChenZhanjie\Agentic\GuardrailMode;
+
+// Register with mode (default is SYNC)
+$guardrailRunner->register(new ToxicityDetector(), GuardrailMode::ASYNC);
+```
+
+### Config format
+
+```php
+// agents.php
+return [
+    'chat' => [
+        'persona' => 'chat.md',
+        'guardrails' => ['content_filter', 'toxicity_detector'],
+        'guardrail_modes' => [                        // Optional
+            'toxicity_detector' => 'async',            // Specify as async
+            // Unlisted guardrails default to 'sync'
+        ],
+        'async_guardrail_timeout' => 5000,            // Optional, milliseconds, default 5000
+    ],
+];
+```
+
+### When to use async?
+
+- **LLM-based guardrails** (toxicity detection, PII identification) that take seconds to complete
+- **External API guardrails** (content moderation services) with network latency
+- Any guardrail where blocking the response would noticeably impact user experience
+
+### Event flow for async recall
+
+When an async output guardrail blocks content:
+
+```
+THINKING → COMPLETE → GUARDRAIL_RECALLED
+↑ Client sees content     ↑ Client retracts content
+```
+
+When an async input guardrail blocks during the loop:
+
+```
+THINKING → ... → GUARDRAIL_RECALLED
+                  ↑ Loop interrupted, partial results discarded
+```
+
 ## Registering Guardrails
 
 ### Method 1: Runtime Registration
@@ -48,13 +109,29 @@ $guardrailRunner->register(new ContentFilterGuardrail());
 ### Method 2: Load from Config
 
 ```php
+// Simple format (all SYNC)
 $guardrailRunner->loadFromConfig([
     \App\Guardrail\ContentFilterGuardrail::class,
-    \App\Guardrail\PiiGuardrail::class,
+]);
+
+// Extended format (with mode)
+$guardrailRunner->loadFromConfig([
+    ['class' => \App\Guardrail\ContentFilterGuardrail::class, 'mode' => 'sync'],
+    ['class' => \App\Guardrail\ToxicityDetector::class, 'mode' => 'async'],
 ]);
 ```
 
 > Note: `loadFromConfig()` replaces all previously registered guardrails.
+
+### Method 3: withModes() Override
+
+Apply mode overrides immutably:
+
+```php
+$runner = $guardrailRunner
+    ->only(['toxicity', 'pii'])
+    ->withModes(['toxicity' => GuardrailMode::ASYNC]);
+```
 
 ## Per-Agent Guardrail Filtering
 
@@ -65,6 +142,7 @@ Specify guardrail whitelists per agent via `agents.php` or `runWithConfig()`:
 return [
     'chat' => [
         'guardrails' => ['content_filter'],  // Only enable content_filter
+        'guardrail_modes' => ['content_filter' => 'async'],
     ],
     'admin' => [
         'guardrails' => [],                   // Empty = all guardrails active
@@ -73,12 +151,54 @@ return [
 
 // runWithConfig
 $agentic->runWithConfig(
-    ['guardrails' => ['content_filter', 'pii_filter']],
+    [
+        'guardrails' => ['content_filter', 'pii_filter'],
+        'guardrail_modes' => ['pii_filter' => 'async'],
+        'async_guardrail_timeout' => 3000,
+    ],
     $messages,
 );
 ```
 
 Uses `GuardrailRunner::only(array $names)` internally — immutable filter returning a new instance, safe for concurrent requests.
+
+## Message Recall (RecallTool)
+
+The SDK includes a built-in `recall` tool for message retraction. This is the unified mechanism for all message interception scenarios:
+
+- Async guardrail recall (automatic)
+- LLM self-correction (LLM calls `recall` tool)
+- External policy enforcement
+
+### How it works
+
+```php
+// Automatically registered by ToolRegistryFactory
+// The LLM can call it like any other tool:
+// { "name": "recall", "arguments": { "message_id": "msg-123", "reason": "PII detected" } }
+```
+
+When a `MessageStoreInterface` is injected, recall automatically persists the change:
+
+```php
+$recallTool = new RecallTool($messageStore);
+$result = $recallTool->execute([
+    'conversation_id' => 'conv-1',
+    'message_id' => 'msg-123',
+    'reason' => 'toxic content',
+]);
+// The message is marked as recalled in the store
+```
+
+### MessageStore recall support
+
+```php
+interface MessageStoreInterface
+{
+    // ... existing methods ...
+    public function recall(string $conversationId, string $messageId, string $reason): void;
+}
+```
 
 ## Custom Guardrail Examples
 
@@ -120,29 +240,33 @@ class ContentFilterGuardrail implements GuardrailInterface
 }
 ```
 
-### PII Detection Guardrail
+### LLM-based Async Guardrail
 
 ```php
-class PiiGuardrail implements GuardrailInterface
+class ToxicityDetector implements GuardrailInterface
 {
-    public function name(): string { return 'pii_filter'; }
+    public function name(): string { return 'toxicity_detector'; }
 
     public function checkInput(array $messages): GuardrailResult
     {
-        return GuardrailResult::ok();
+        // Use a secondary LLM call to detect toxicity
+        $lastMessage = end($messages)['content'] ?? '';
+        return $this->analyzeToxicity($lastMessage);
     }
 
     public function checkOutput(string $content): GuardrailResult
     {
-        // Detect ID numbers
-        if (preg_match('/\d{17}[\dXx]/', $content)) {
-            return GuardrailResult::blocked('Output contains ID number');
-        }
-        // Detect phone numbers
-        if (preg_match('/1[3-9]\d{9}/', $content)) {
-            return GuardrailResult::blocked('Output contains phone number');
-        }
-        return GuardrailResult::ok();
+        return $this->analyzeToxicity($content);
+    }
+
+    private function analyzeToxicity(string $text): GuardrailResult
+    {
+        // Call moderation API or secondary LLM
+        // This may take seconds — ideal for ASYNC mode
+        $score = $this->moderationApi->analyze($text);
+        return $score > 0.8
+            ? GuardrailResult::blocked('Toxic content detected (score: ' . $score . ')')
+            : GuardrailResult::ok();
     }
 }
 ```
@@ -150,20 +274,41 @@ class PiiGuardrail implements GuardrailInterface
 ## GuardrailRunner API
 
 ```php
-$runner->register($guardrail);                          // Append a guardrail
+$runner->register($guardrail);                          // Append a guardrail (SYNC by default)
+$runner->register($guardrail, GuardrailMode::ASYNC);    // Append as async
 $runner->loadFromConfig([...]);                         // Load from class names (replaces)
-$runner->checkInput($messages);                         // Check input, returns first blocked result or null
-$runner->checkOutput($content);                         // Check output, returns first blocked result or null
+$runner->checkInput($messages);                         // Sync check, returns first blocked or null
+$runner->checkOutput($content);                         // Sync check, returns first blocked or null
+$runner->checkInputAsync($messages);                    // Returns AsyncGuardrailContext
+$runner->checkOutputAsync($content);                    // Returns AsyncGuardrailContext
 $runner->only(['content_filter']);                      // Immutable filter, returns new instance
+$runner->withModes(['toxicity' => GuardrailMode::ASYNC]); // Immutable mode override
 ```
 
-## AgentResult When Blocked
+## AgentResult States
 
-When a guardrail blocks execution, the `AgentResult` state is:
+### When sync guardrail blocks:
 
 ```php
-$result->isComplete();          // false
 $result->isGuardrailBlocked();  // true
-$result->content;               // Block reason text
-$result->stopReason;            // 'guardrail_blocked'
+$result->content;               // '' (empty)
+$result->stopReason;            // 'guardrail'
 ```
+
+### When async guardrail recalls:
+
+```php
+$result->isGuardrailBlocked();  // true
+$result->isRecalled();          // true
+$result->content;               // The original output (before recall)
+$result->recallReason;          // 'toxic content detected'
+$result->stopReason;            // 'guardrail'
+```
+
+## New Event Types
+
+| Event | When |
+|-------|------|
+| `guardrail_blocked` | Sync guardrail blocks before content reaches client |
+| `guardrail_recalled` | Async guardrail blocks after content was emitted |
+| `message_recalled` | RecallTool executed (LLM self-recall or external) |

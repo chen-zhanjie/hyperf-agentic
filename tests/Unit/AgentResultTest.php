@@ -78,4 +78,52 @@ class AgentResultTest extends TestCase
         $arr = $result->toArray();
         $this->assertTrue($arr['suspended']);
     }
+
+    public function testGuardrailBlockedFactory(): void
+    {
+        $result = AgentResult::guardrailBlocked('input', 'toxic content', 500);
+        $this->assertTrue($result->isGuardrailBlocked());
+        $this->assertFalse($result->isRecalled());
+        $this->assertSame('guardrail', $result->stopReason);
+        $this->assertSame('input', $result->getSuspendedReason());
+        $this->assertSame(['reason' => 'toxic content'], $result->getSuspendedData());
+    }
+
+    public function testRecalledFactory(): void
+    {
+        $result = AgentResult::recalled(
+            content: 'Bad output',
+            reason: 'PII detected',
+            messageId: 'msg-123',
+            elapsedMs: 300,
+        );
+        $this->assertTrue($result->isRecalled());
+        $this->assertTrue($result->isGuardrailBlocked());
+        $this->assertSame('Bad output', $result->content);
+        $this->assertSame('msg-123', $result->messageId);
+        $this->assertSame('PII detected', $result->recallReason);
+        $this->assertSame(300, $result->elapsedMs);
+    }
+
+    public function testRecalledToArrayIncludesRecallFields(): void
+    {
+        $result = AgentResult::recalled(
+            content: 'test',
+            reason: 'unsafe',
+            messageId: 'msg-1',
+        );
+        $arr = $result->toArray();
+        $this->assertTrue($arr['recalled']);
+        $this->assertSame('unsafe', $arr['recall_reason']);
+        $this->assertSame('msg-1', $arr['message_id']);
+    }
+
+    public function testNonRecalledResultHasNoRecallFields(): void
+    {
+        $result = AgentResult::complete(content: 'hello');
+        $arr = $result->toArray();
+        $this->assertFalse($arr['recalled']);
+        $this->assertNull($arr['recall_reason']);
+        $this->assertNull($arr['message_id']);
+    }
 }

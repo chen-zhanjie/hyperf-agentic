@@ -97,6 +97,58 @@ class MemoryMessageStoreTest extends TestCase
         $this->assertFalse($this->store->exists('conv-1'));
     }
 
+    // ── recall ──
+
+    public function testRecallMarksMessageAsRecalled(): void
+    {
+        $this->store->append('conv-1', [
+            ['id' => 'msg-1', 'role' => 'user', 'content' => 'Hello'],
+            ['id' => 'msg-2', 'role' => 'assistant', 'content' => 'Bad output'],
+        ]);
+
+        $this->store->recall('conv-1', 'msg-2', 'unsafe content');
+
+        $messages = $this->store->load('conv-1');
+        $this->assertTrue($messages[1]['recalled']);
+        $this->assertSame('unsafe content', $messages[1]['recall_reason']);
+        $this->assertSame('[消息已撤回]', $messages[1]['content']);
+    }
+
+    public function testRecallDoesNotAffectOtherMessages(): void
+    {
+        $this->store->append('conv-1', [
+            ['id' => 'msg-1', 'role' => 'user', 'content' => 'Hello'],
+            ['id' => 'msg-2', 'role' => 'assistant', 'content' => 'Bad'],
+        ]);
+
+        $this->store->recall('conv-1', 'msg-2', 'test');
+
+        $messages = $this->store->load('conv-1');
+        $this->assertFalse(isset($messages[0]['recalled']));
+        $this->assertSame('Hello', $messages[0]['content']);
+    }
+
+    public function testRecallUnknownMessageDoesNothing(): void
+    {
+        $this->store->append('conv-1', [
+            ['id' => 'msg-1', 'role' => 'user', 'content' => 'Hello'],
+        ]);
+
+        // Should not throw
+        $this->store->recall('conv-1', 'msg-nonexistent', 'test');
+
+        $messages = $this->store->load('conv-1');
+        $this->assertCount(1, $messages);
+        $this->assertFalse(isset($messages[0]['recalled']));
+    }
+
+    public function testRecallUnknownConversationDoesNotError(): void
+    {
+        // Should not throw
+        $this->store->recall('conv-nonexistent', 'msg-1', 'test');
+        $this->assertSame([], $this->store->load('conv-nonexistent'));
+    }
+
     // ── implements interface ──
 
     public function testImplementsMessageStoreInterface(): void

@@ -16,6 +16,9 @@ class AgentResult
         public readonly ?string $stopReason = null,
         private readonly ?string $suspendedReason = null,
         private readonly ?array $suspendedData = null,
+        public readonly bool $recalled = false,
+        public readonly ?string $recallReason = null,
+        public readonly ?string $messageId = null,
     ) {}
 
     public static function complete(
@@ -69,6 +72,22 @@ class AgentResult
         );
     }
 
+    public static function recalled(
+        string $content,
+        string $reason,
+        string $messageId = '',
+        int $elapsedMs = 0,
+    ): self {
+        return new self(
+            content: $content,
+            stopReason: 'guardrail',
+            elapsedMs: $elapsedMs,
+            recalled: true,
+            recallReason: $reason,
+            messageId: $messageId !== '' ? $messageId : null,
+        );
+    }
+
     public function isComplete(): bool
     {
         return $this->stopReason !== null && $this->suspendedReason === null;
@@ -82,6 +101,16 @@ class AgentResult
     public function isBudgetExhausted(): bool
     {
         return $this->stopReason === 'budget_exhausted';
+    }
+
+    public function isGuardrailBlocked(): bool
+    {
+        return $this->stopReason === 'guardrail';
+    }
+
+    public function isRecalled(): bool
+    {
+        return $this->recalled;
     }
 
     public function getSuspendedReason(): ?string
@@ -106,6 +135,9 @@ class AgentResult
             'tool_calls' => $this->toolCalls,
             'stop_reason' => $this->stopReason,
             'suspended' => $this->isSuspended(),
+            'recalled' => $this->recalled,
+            'recall_reason' => $this->recallReason,
+            'message_id' => $this->messageId,
         ];
     }
 }

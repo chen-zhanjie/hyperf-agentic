@@ -202,6 +202,11 @@ class PromptBuilder
         }
         $lines[] = "\n仅使用以上列出的工具。不要调用不存在的工具。";
 
+        // Add recall tool usage hint if available
+        if ($tools->has('recall')) {
+            $lines[] = "\n你可以使用 recall 工具撤回之前发送的消息（当你发现输出有误或不当时）。";
+        }
+
         return implode("\n", $lines);
     }
 }

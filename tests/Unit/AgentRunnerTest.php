@@ -10,6 +10,7 @@ use ChenZhanjie\Agentic\Contract\GuardrailInterface;
 use ChenZhanjie\Agentic\Contract\MiddlewareInterface;
 use ChenZhanjie\Agentic\Contract\SkillInterface;
 use ChenZhanjie\Agentic\Contract\ToolInterface;
+use ChenZhanjie\Agentic\GuardrailMode;
 use ChenZhanjie\Agentic\GuardrailResult;
 use ChenZhanjie\Agentic\GuardrailRunner;
 use ChenZhanjie\Agentic\LlmClient;
@@ -909,5 +910,117 @@ class AgentRunnerTest extends TestCase
         $this->assertNotNull($cached);
         $this->assertStringContainsString('Agent Beta', $cached);
         $this->assertStringNotContainsString('Agent Alpha', $cached);
+    }
+
+    // ── Async guardrails ──
+
+    public function testAsyncOutputGuardrailBlocksAfterOutput(): void
+    {
+        // Sync guardrail passes, async guardrail blocks
+        $guardrail = new class implements GuardrailInterface {
+            public bool $asyncBlocked = false;
+            public function name(): string { return 'toxicity'; }
+            public function checkInput(array $messages): GuardrailResult
+            {
+                return GuardrailResult::ok();
+            }
+            public function checkOutput(string $content): GuardrailResult
+            {
+                if (str_contains($content, 'TOXIC')) {
+                    $this->asyncBlocked = true;
+                    return GuardrailResult::blocked('toxic content');
+                }
+                return GuardrailResult::ok();
+            }
+        };
+
+        $guardrailRunner = new GuardrailRunner();
+        $guardrailRunner->register($guardrail, GuardrailMode::ASYNC);
+
+        $llm = $this->createMockLlm([
+            ['content' => 'TOXIC output', 'usage' => $this->usage(50, 20)],
+        ]);
+
+        $events = [];
+        $onEvent = function (string $type, array $payload) use (&$events): void {
+            $events[] = ['type' => $type, 'payload' => $payload];
+        };
+
+        $runner = $this->createRunner($llm, guardrailRunner: $guardrailRunner);
+        $result = $runner->run(
+            [['role' => 'user', 'content' => 'say toxic']],
+            $this->defaultConfig(),
+            [],
+            $onEvent,
+        );
+
+        // Result should be recalled (guardrail blocked after output)
+        $this->assertTrue($result->isGuardrailBlocked());
+        $this->assertSame('TOXIC output', $result->content);
+
+        // Events should include: THINKING → COMPLETE → GUARDRAIL_RECALLED
+        $eventTypes = array_column($events, 'type');
+        $this->assertContains('thinking', $eventTypes);
+        $this->assertContains('complete', $eventTypes);
+        $this->assertContains('guardrail_recalled', $eventTypes);
+    }
+
+    public function testAsyncOutputGuardrailPassesReturnsNormalResult(): void
+    {
+        $guardrail = new class implements GuardrailInterface {
+            public function name(): string { return 'safe_checker'; }
+            public function checkInput(array $messages): GuardrailResult { return GuardrailResult::ok(); }
+            public function checkOutput(string $content): GuardrailResult { return GuardrailResult::ok(); }
+        };
+
+        $guardrailRunner = new GuardrailRunner();
+        $guardrailRunner->register($guardrail, GuardrailMode::ASYNC);
+
+        $llm = $this->createMockLlm([
+            ['content' => 'Safe output', 'usage' => $this->usage(50, 20)],
+        ]);
+
+        $runner = $this->createRunner($llm, guardrailRunner: $guardrailRunner);
+        $result = $runner->run(
+            [['role' => 'user', 'content' => 'hello']],
+            $this->defaultConfig(),
+        );
+
+        $this->assertTrue($result->isComplete());
+        $this->assertSame('Safe output', $result->content);
+        $this->assertFalse($result->isRecalled());
+    }
+
+    public function testGuardrailModesConfigAppliesAsyncModes(): void
+    {
+        $syncGuard = new class implements GuardrailInterface {
+            public function name(): string { return 'sync_filter'; }
+            public function checkInput(array $messages): GuardrailResult { return GuardrailResult::ok(); }
+            public function checkOutput(string $content): GuardrailResult { return GuardrailResult::ok(); }
+        };
+        $asyncGuard = new class implements GuardrailInterface {
+            public function name(): string { return 'async_checker'; }
+            public function checkInput(array $messages): GuardrailResult { return GuardrailResult::ok(); }
+            public function checkOutput(string $content): GuardrailResult { return GuardrailResult::ok(); }
+        };
+
+        $guardrailRunner = new GuardrailRunner();
+        $guardrailRunner->register($syncGuard);
+        $guardrailRunner->register($asyncGuard);
+
+        $llm = $this->createMockLlm([
+            ['content' => 'output', 'usage' => $this->usage(50, 20)],
+        ]);
+
+        $runner = $this->createRunner($llm, guardrailRunner: $guardrailRunner);
+        $result = $runner->run(
+            [['role' => 'user', 'content' => 'test']],
+            array_merge($this->defaultConfig(), [
+                'guardrails' => ['sync_filter', 'async_checker'],
+                'guardrail_modes' => ['async_checker' => 'async'],
+            ]),
+        );
+
+        $this->assertTrue($result->isComplete());
     }
 }

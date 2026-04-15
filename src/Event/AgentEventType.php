@@ -23,4 +23,6 @@ enum AgentEventType: string
     case RESUMED = 'resumed';
 
     case GUARDRAIL_BLOCKED = 'guardrail_blocked';
+    case GUARDRAIL_RECALLED = 'guardrail_recalled';
+    case MESSAGE_RECALLED = 'message_recalled';
 }

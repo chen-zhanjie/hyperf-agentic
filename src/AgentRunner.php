@@ -203,22 +203,33 @@ class AgentRunner
             $activeRegistry = $this->toolRegistry->only($toolWhitelist);
         }
 
-        // Resolve active guardrails (per-agent filtering)
+        // Resolve active guardrails (per-agent filtering + mode overrides)
         $this->activeGuardrails = $this->guardrailRunner;
         $guardrailWhitelist = $agentConfig['guardrails'] ?? [];
         if (!empty($guardrailWhitelist)) {
             $this->activeGuardrails = $this->guardrailRunner->only($guardrailWhitelist);
         }
 
-        // Phase 2: Input guardrails
-        $guardrailResult = $this->activeGuardrails->checkInput($messages);
-        if ($guardrailResult !== null) {
+        // Apply guardrail mode overrides from config
+        $guardrailModes = $agentConfig['guardrail_modes'] ?? [];
+        if (!empty($guardrailModes)) {
+            $modeMap = [];
+            foreach ($guardrailModes as $name => $modeStr) {
+                $modeMap[$name] = GuardrailMode::from($modeStr);
+            }
+            $this->activeGuardrails = $this->activeGuardrails->withModes($modeMap);
+        }
+
+        // Phase 2: Input guardrails (async-aware)
+        $inputGuardContext = $this->activeGuardrails->checkInputAsync($messages);
+        if ($inputGuardContext->isBlocked()) {
+            $blockResult = $inputGuardContext->getBlockResult();
             $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
                 'type' => 'input',
-                'name' => 'input_guard',
-                'reason' => $guardrailResult->reason,
+                'name' => $inputGuardContext->getBlockName() ?? 'input_guard',
+                'reason' => $blockResult->reason,
             ]);
-            return AgentResult::guardrailBlocked('input', $guardrailResult->reason, $this->elapsedMs($startTime));
+            return AgentResult::guardrailBlocked('input', $blockResult->reason, $this->elapsedMs($startTime));
         }
 
         // Phase 3: System prompt resolution
@@ -257,10 +268,14 @@ class AgentRunner
         $totalCompletionTokens = 0;
         $totalToolCalls = 0;
 
+        $asyncGuardrailTimeout = (int) ($agentConfig['async_guardrail_timeout'] ?? 5000);
+
         $result = $this->runLoop(
             $fullMessages, $systemMessage, $toolSchemas, $budget, $maxIterations,
             $costBudget, $options, $onEvent, $startTime,
             $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+            $inputGuardContext,
+            $asyncGuardrailTimeout,
         );
 
         // Grace turn: budget exhausted but LLM gets one more chance to wrap up
@@ -269,6 +284,7 @@ class AgentRunner
                 $fullMessages, $systemMessage, $toolSchemas, $budget,
                 $costBudget, $options, $onEvent, $startTime,
                 $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+                $inputGuardContext,
             );
         }
 
@@ -302,14 +318,29 @@ class AgentRunner
         int &$totalPromptTokens,
         int &$totalCompletionTokens,
         int &$totalToolCalls,
+        ?AsyncGuardrailContext $inputGuardContext = null,
+        int $asyncGuardrailTimeout = 5000,
     ): ?AgentResult {
         while ($budget->consume() && !$costBudget->isExceeded()) {
+            // Check async input guardrails (may complete between iterations)
+            if ($inputGuardContext !== null && $inputGuardContext->isBlocked()) {
+                $blockResult = $inputGuardContext->getBlockResult();
+                $blockName = $inputGuardContext->getBlockName() ?? 'input_async';
+                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_RECALLED, [
+                    'type' => 'input',
+                    'name' => $blockName,
+                    'reason' => $blockResult->reason,
+                ]);
+                return AgentResult::guardrailBlocked('input_async', $blockResult->reason, $this->elapsedMs($startTime));
+            }
+
             ++$iterations;
 
             $turnResult = $this->executeTurn(
                 $fullMessages, $systemMessage, $toolSchemas, $budget,
                 $costBudget, $options, $onEvent, $startTime,
                 $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+                $asyncGuardrailTimeout,
             );
 
             if ($turnResult !== null) {
@@ -337,6 +368,7 @@ class AgentRunner
         int &$totalPromptTokens,
         int &$totalCompletionTokens,
         int &$totalToolCalls,
+        ?AsyncGuardrailContext $inputGuardContext = null,
     ): ?AgentResult {
         ++$iterations;
 
@@ -375,14 +407,15 @@ class AgentRunner
         if (empty($toolCalls)) {
             $textContent = is_string($content) ? $content : (string) ($content ?? '');
 
-            $outputGuardResult = $this->activeGuardrails->checkOutput($textContent);
-            if ($outputGuardResult !== null) {
+            $outputGuardContext = $this->activeGuardrails->checkOutputAsync($textContent);
+            if ($outputGuardContext->isBlocked()) {
+                $blockResult = $outputGuardContext->getBlockResult();
                 $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
                     'type' => 'output',
-                    'name' => 'output_guard',
-                    'reason' => $outputGuardResult->reason,
+                    'name' => $outputGuardContext->getBlockName() ?? 'output_guard',
+                    'reason' => $blockResult->reason,
                 ]);
-                return AgentResult::guardrailBlocked('output', $outputGuardResult->reason, $this->elapsedMs($startTime));
+                return AgentResult::guardrailBlocked('output', $blockResult->reason, $this->elapsedMs($startTime));
             }
 
             $result = AgentResult::complete(
@@ -402,6 +435,25 @@ class AgentRunner
                 'prompt_tokens' => $totalPromptTokens,
                 'completion_tokens' => $totalCompletionTokens,
             ]);
+
+            // Wait for async guardrails
+            if ($outputGuardContext->hasAsyncGuardrails() && !$outputGuardContext->allCompleted()) {
+                $outputGuardContext->await(5000);
+            }
+
+            if ($outputGuardContext->isBlocked()) {
+                $blockResult = $outputGuardContext->getBlockResult();
+                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_RECALLED, [
+                    'type' => 'output',
+                    'name' => $outputGuardContext->getBlockName() ?? 'output_async',
+                    'reason' => $blockResult->reason,
+                ]);
+                return AgentResult::recalled(
+                    content: $textContent,
+                    reason: $blockResult->reason,
+                    elapsedMs: $this->elapsedMs($startTime),
+                );
+            }
 
             return $result;
         }
@@ -437,6 +489,7 @@ class AgentRunner
         int &$totalPromptTokens,
         int &$totalCompletionTokens,
         int &$totalToolCalls,
+        int $asyncGuardrailTimeout = 5000,
     ): ?AgentResult {
         // Build ephemeral prompt for this turn
         $ephemeral = $this->promptBuilder->buildEphemeralPrompt(
@@ -481,15 +534,18 @@ class AgentRunner
         if (empty($toolCalls)) {
             $textContent = is_string($content) ? $content : (string) ($content ?? '');
 
-            // Phase 7: Output guardrail check
-            $outputGuardResult = $this->activeGuardrails->checkOutput($textContent);
-            if ($outputGuardResult !== null) {
+            // Phase 7: Output guardrail check (async-aware)
+            $outputGuardContext = $this->activeGuardrails->checkOutputAsync($textContent);
+
+            // Sync guardrail blocked immediately (before output reaches client)
+            if ($outputGuardContext->isBlocked() && !$outputGuardContext->hasAsyncGuardrails()) {
+                $blockResult = $outputGuardContext->getBlockResult();
                 $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
                     'type' => 'output',
-                    'name' => 'output_guard',
-                    'reason' => $outputGuardResult->reason,
+                    'name' => $outputGuardContext->getBlockName() ?? 'output_guard',
+                    'reason' => $blockResult->reason,
                 ]);
-                return AgentResult::guardrailBlocked('output', $outputGuardResult->reason, $this->elapsedMs($startTime));
+                return AgentResult::guardrailBlocked('output', $blockResult->reason, $this->elapsedMs($startTime));
             }
 
             // Middleware — after loop
@@ -510,6 +566,26 @@ class AgentRunner
                 'prompt_tokens' => $totalPromptTokens,
                 'completion_tokens' => $totalCompletionTokens,
             ]);
+
+            // Wait for async guardrails to complete
+            if ($outputGuardContext->hasAsyncGuardrails() && !$outputGuardContext->allCompleted()) {
+                $outputGuardContext->await($asyncGuardrailTimeout);
+            }
+
+            // Async guardrail blocked after output → recall
+            if ($outputGuardContext->isBlocked()) {
+                $blockResult = $outputGuardContext->getBlockResult();
+                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_RECALLED, [
+                    'type' => 'output',
+                    'name' => $outputGuardContext->getBlockName() ?? 'output_async',
+                    'reason' => $blockResult->reason,
+                ]);
+                return AgentResult::recalled(
+                    content: $textContent,
+                    reason: $blockResult->reason,
+                    elapsedMs: $this->elapsedMs($startTime),
+                );
+            }
 
             return $result;
         }

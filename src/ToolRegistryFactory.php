@@ -3,10 +3,13 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic;
 
+use ChenZhanjie\Agentic\Contract\MessageStoreInterface;
 use ChenZhanjie\Agentic\Loader\AnnotationToolLoader;
 use ChenZhanjie\Agentic\Loader\ConfigToolLoader;
+use ChenZhanjie\Agentic\Session\MemoryMessageStore;
 use ChenZhanjie\Agentic\Skill\SkillRegistry;
 use ChenZhanjie\Agentic\Tool\Builtin\AskTool;
+use ChenZhanjie\Agentic\Tool\Builtin\RecallTool;
 use ChenZhanjie\Agentic\Tool\Builtin\SkillTool;
 use Psr\Container\ContainerInterface;
 
@@ -33,7 +36,11 @@ class ToolRegistryFactory
         // 3. Built-in tools
         $registry->register($this->container->get(AskTool::class));
 
-        // 4. SkillTool — only when SkillRegistry is available
+        // 4. RecallTool (system-level message recall)
+        $messageStore = $this->container->get(MessageStoreInterface::class);
+        $registry->register(new RecallTool($messageStore));
+
+        // 5. SkillTool — only when SkillRegistry is available
         $skillRegistry = $this->container->get(SkillRegistry::class);
         if ($skillRegistry !== null) {
             $registry->register(new SkillTool($skillRegistry));

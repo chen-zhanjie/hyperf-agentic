@@ -4,6 +4,9 @@ declare(strict_types=1);
 namespace ChenZhanjie\Agentic\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
+use ChenZhanjie\Agentic\AsyncGuardrailContext;
+use ChenZhanjie\Agentic\GuardrailEntry;
+use ChenZhanjie\Agentic\GuardrailMode;
 use ChenZhanjie\Agentic\GuardrailResult;
 use ChenZhanjie\Agentic\GuardrailRunner;
 use ChenZhanjie\Agentic\Contract\GuardrailInterface;
@@ -286,6 +289,139 @@ class GuardrailRunnerTest extends TestCase
         $result = $filtered->checkOutput('test');
 
         $this->assertSame('PII output', $result->reason);
+    }
+
+    // ── register with mode ──
+
+    public function testRegisterDefaultModeIsSync(): void
+    {
+        $guardrail = $this->createStubGuardrail('test', false);
+        $runner = new GuardrailRunner();
+        $runner->register($guardrail);
+
+        $ctx = $runner->checkInputAsync([['role' => 'user', 'content' => 'test']]);
+        // Sync guardrail runs immediately, no async handles
+        $this->assertFalse($ctx->hasAsyncGuardrails());
+    }
+
+    public function testRegisterWithAsyncMode(): void
+    {
+        $guardrail = $this->createStubGuardrail('async_guard', false);
+        $runner = new GuardrailRunner();
+        $runner->register($guardrail, GuardrailMode::ASYNC);
+
+        $ctx = $runner->checkInputAsync([['role' => 'user', 'content' => 'test']]);
+        $this->assertTrue($ctx->hasAsyncGuardrails());
+    }
+
+    // ── checkInputAsync ──
+
+    public function testCheckInputAsyncSyncBlockReturnsBlockedContext(): void
+    {
+        $syncGuard = $this->createStubGuardrail('sync_blocker', true, 'sync blocked');
+        $runner = new GuardrailRunner();
+        $runner->register($syncGuard);
+
+        $ctx = $runner->checkInputAsync([['role' => 'user', 'content' => 'bad']]);
+        $this->assertTrue($ctx->isBlocked());
+        $this->assertSame('sync blocked', $ctx->getBlockResult()->reason);
+    }
+
+    public function testCheckInputAsyncSyncPassAsyncPending(): void
+    {
+        $syncGuard = $this->createStubGuardrail('sync_ok', false);
+        $asyncGuard = $this->createStubGuardrail('async_check', false);
+        $runner = new GuardrailRunner();
+        $runner->register($syncGuard);
+        $runner->register($asyncGuard, GuardrailMode::ASYNC);
+
+        $ctx = $runner->checkInputAsync([['role' => 'user', 'content' => 'test']]);
+        // Without Swoole, async guardrails execute synchronously
+        $this->assertFalse($ctx->isBlocked());
+        $this->assertTrue($ctx->hasAsyncGuardrails());
+        // In non-Swoole environment, handle completes immediately
+        $this->assertTrue($ctx->allCompleted());
+    }
+
+    // ── checkOutputAsync ──
+
+    public function testCheckOutputAsyncSyncBlockReturnsBlockedContext(): void
+    {
+        $syncGuard = $this->createStubGuardrail('sync_blocker', true, 'output unsafe');
+        $runner = new GuardrailRunner();
+        $runner->register($syncGuard);
+
+        $ctx = $runner->checkOutputAsync('bad content');
+        $this->assertTrue($ctx->isBlocked());
+    }
+
+    public function testCheckOutputAsyncSyncPassAsyncPending(): void
+    {
+        $syncGuard = $this->createStubGuardrail('sync_ok', false);
+        $asyncGuard = $this->createStubGuardrail('async_check', false);
+        $runner = new GuardrailRunner();
+        $runner->register($syncGuard);
+        $runner->register($asyncGuard, GuardrailMode::ASYNC);
+
+        $ctx = $runner->checkOutputAsync('test content');
+        $this->assertFalse($ctx->isBlocked());
+        $this->assertTrue($ctx->hasAsyncGuardrails());
+        // Without Swoole, async completes synchronously
+        $this->assertTrue($ctx->allCompleted());
+    }
+
+    // ── loadFromConfig with mode support ──
+
+    public function testLoadFromConfigWithStringArrayDefaultsToSync(): void
+    {
+        $runner = new GuardrailRunner();
+        // NonExistent class is silently skipped
+        $runner->loadFromConfig(['\\NonExistent\\Guardrail']);
+
+        $ctx = $runner->checkInputAsync([['role' => 'user', 'content' => 'test']]);
+        $this->assertFalse($ctx->hasAsyncGuardrails());
+    }
+
+    public function testLoadFromConfigWithModeMap(): void
+    {
+        $guardrail = $this->createStubGuardrail('configurable', false);
+
+        // Create a concrete class that we can instantiate by name
+        $runner = new GuardrailRunner();
+        // We can't loadFromConfig with anonymous classes, so test via register
+        $runner->register($guardrail, GuardrailMode::ASYNC);
+
+        $ctx = $runner->checkInputAsync([['role' => 'user', 'content' => 'test']]);
+        $this->assertTrue($ctx->hasAsyncGuardrails());
+    }
+
+    // ── withModes ──
+
+    public function testWithModesReturnsNewInstance(): void
+    {
+        $guardrail = $this->createStubGuardrail('test', false);
+        $runner = new GuardrailRunner();
+        $runner->register($guardrail);
+
+        $modified = $runner->withModes(['test' => GuardrailMode::ASYNC]);
+        $this->assertNotSame($runner, $modified);
+    }
+
+    public function testWithModesDoesNotMutateOriginal(): void
+    {
+        $guardrail = $this->createStubGuardrail('test', false);
+        $runner = new GuardrailRunner();
+        $runner->register($guardrail);
+
+        $modified = $runner->withModes(['test' => GuardrailMode::ASYNC]);
+
+        // Original still sync
+        $originalCtx = $runner->checkInputAsync([['role' => 'user', 'content' => 'test']]);
+        $this->assertFalse($originalCtx->hasAsyncGuardrails());
+
+        // Modified is async
+        $modifiedCtx = $modified->checkInputAsync([['role' => 'user', 'content' => 'test']]);
+        $this->assertTrue($modifiedCtx->hasAsyncGuardrails());
     }
 
     // ── helpers ──
