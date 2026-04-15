@@ -5,12 +5,14 @@ namespace ChenZhanjie\Agentic;
 
 use ChenZhanjie\Agentic\Loader\AnnotationToolLoader;
 use ChenZhanjie\Agentic\Loader\ConfigToolLoader;
+use ChenZhanjie\Agentic\Skill\SkillRegistry;
 use ChenZhanjie\Agentic\Tool\Builtin\AskTool;
+use ChenZhanjie\Agentic\Tool\Builtin\SkillTool;
 use Psr\Container\ContainerInterface;
 
 /**
  * ToolRegistry factory — loads all tools at Hyperf startup.
- * Order: annotation tools → config tools → built-in tools (AskTool).
+ * Order: annotation tools → config tools → built-in tools (AskTool, SkillTool).
  */
 class ToolRegistryFactory
 {
@@ -30,6 +32,12 @@ class ToolRegistryFactory
 
         // 3. Built-in tools
         $registry->register($this->container->get(AskTool::class));
+
+        // 4. SkillTool — only when SkillRegistry is available
+        $skillRegistry = $this->container->get(SkillRegistry::class);
+        if ($skillRegistry !== null) {
+            $registry->register(new SkillTool($skillRegistry));
+        }
 
         return $registry;
     }

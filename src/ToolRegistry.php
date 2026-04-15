@@ -59,11 +59,6 @@ class ToolRegistry
         }
     }
 
-    public function executeText(string $name, array $arguments): string
-    {
-        return $this->execute($name, $arguments)->toText();
-    }
-
     public function getAvailableSchemas(): array
     {
         $schemas = [];

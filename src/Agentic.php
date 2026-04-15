@@ -6,7 +6,6 @@ namespace ChenZhanjie\Agentic;
 use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
 use ChenZhanjie\Agentic\Contract\MessageStoreInterface;
 use ChenZhanjie\Agentic\Contract\SessionStoreInterface;
-use ChenZhanjie\Agentic\Event\AgentEventType;
 use ChenZhanjie\Agentic\Event\EventEmitter;
 use ChenZhanjie\Agentic\Persona\Persona;
 

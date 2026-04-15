@@ -5,8 +5,8 @@ namespace ChenZhanjie\Agentic\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
 use ChenZhanjie\Agentic\Contract\ToolInterface;
+use ChenZhanjie\Agentic\Skill\SkillRegistry;
 use ChenZhanjie\Agentic\Tool\Builtin\AskTool;
-use ChenZhanjie\Agentic\Tool\Builtin\SkillTool;
 use ChenZhanjie\Agentic\ToolRegistryFactory;
 use ChenZhanjie\Agentic\Loader\AnnotationToolLoader;
 use ChenZhanjie\Agentic\Loader\ConfigToolLoader;
@@ -73,5 +73,33 @@ class ToolRegistryFactoryTest extends TestCase
 
         $factory = new ToolRegistryFactory($this->container);
         ($factory)();
+    }
+
+    public function testFactoryRegistersSkillTool(): void
+    {
+        $annotationLoader = $this->createMock(AnnotationToolLoader::class);
+        $annotationLoader->method('load')->willReturnCallback(fn($registry) => null);
+
+        $configLoader = $this->createMock(ConfigToolLoader::class);
+        $configLoader->method('load')->willReturnCallback(fn($registry) => null);
+
+        $askTool = $this->createMock(AskTool::class);
+        $askTool->method('name')->willReturn('ask');
+        $askTool->method('isEnabled')->willReturn(true);
+
+        $skillRegistry = new SkillRegistry();
+
+        $this->container->method('get')
+            ->willReturnMap([
+                [AnnotationToolLoader::class, $annotationLoader],
+                [ConfigToolLoader::class, $configLoader],
+                [AskTool::class, $askTool],
+                [SkillRegistry::class, $skillRegistry],
+            ]);
+
+        $factory = new ToolRegistryFactory($this->container);
+        $registry = ($factory)();
+
+        $this->assertTrue($registry->has('skill'), 'SkillTool should be registered when SkillRegistry is available');
     }
 }
