@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic;
 
+use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
 use ChenZhanjie\Agentic\Event\AgentEventType;
 use ChenZhanjie\Agentic\Event\EventEmitter;
 use ChenZhanjie\Agentic\Persona\Persona;
@@ -110,6 +111,14 @@ class Agentic
     public function has(string $agentName): bool
     {
         return isset($this->agentDefs[$agentName]);
+    }
+
+    /**
+     * Set the human input resolver (injected into AskTool at dispatch time).
+     */
+    public function setHumanInputResolver(HumanInputResolverInterface $resolver): void
+    {
+        $this->runner->setHumanInputResolver($resolver);
     }
 
     /**
