@@ -66,6 +66,7 @@ class SkillRegistryTest extends TestCase
         $registry->register($skill);
 
         $this->assertSame($skill, $registry->get('test-skill'));
+        $this->assertSame('test-skill', $registry->get('test-skill')->name());
         $this->assertNull($registry->get('nonexistent'));
     }
 
@@ -232,10 +233,10 @@ Instructions here.
 MD);
 
         $skill = Skill::fromMarkdownFile($dir . '/SKILL.md');
-        $this->assertSame('my-skill', $skill->name);
-        $this->assertSame('Does something useful', $skill->description);
-        $this->assertSame(['tool-a', 'tool-b'], $skill->tools);
-        $this->assertTrue($skill->autoInvoke);
+        $this->assertSame('my-skill', $skill->name());
+        $this->assertSame('Does something useful', $skill->description());
+        $this->assertSame(['tool-a', 'tool-b'], $skill->tools());
+        $this->assertTrue($skill->autoInvoke());
     }
 
     public function testFromMarkdownFileThrowsForMissingFrontmatter(): void

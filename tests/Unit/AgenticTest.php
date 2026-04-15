@@ -7,12 +7,16 @@ use PHPUnit\Framework\TestCase;
 use ChenZhanjie\Agentic\AgentResult;
 use ChenZhanjie\Agentic\Agentic;
 use ChenZhanjie\Agentic\AgentRunner;
+use ChenZhanjie\Agentic\Contract\GuardrailInterface;
+use ChenZhanjie\Agentic\Contract\MessageStoreInterface;
 use ChenZhanjie\Agentic\Contract\ToolInterface;
+use ChenZhanjie\Agentic\GuardrailResult;
 use ChenZhanjie\Agentic\GuardrailRunner;
 use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\PromptBuilder;
+use ChenZhanjie\Agentic\Session\MemoryMessageStore;
 use ChenZhanjie\Agentic\ToolRegistry;
 use ChenZhanjie\Agentic\Event\AgentEventType;
 
@@ -184,6 +188,184 @@ class AgenticTest extends TestCase
         ]);
         $this->assertTrue($agentic->has('chat'));
         $this->assertFalse($agentic->has('other'));
+    }
+
+    // ── runWithConfig ──
+
+    public function testRunWithConfigBypassesAgentNameLookup(): void
+    {
+        $llm = $this->createMockLlm([['content' => 'Dynamic response', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+
+        $agentic = new Agentic(
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+        );
+
+        // No agents defined, but runWithConfig still works
+        $result = $agentic->runWithConfig(
+            ['persona' => new Persona(name: 'Dynamic', content: 'You are dynamic.')],
+            [['role' => 'user', 'content' => 'hi']],
+        );
+
+        $this->assertTrue($result->isComplete());
+        $this->assertSame('Dynamic response', $result->content);
+    }
+
+    public function testRunWithConfigMergesDefaults(): void
+    {
+        $llm = $this->createMockLlm([['content' => 'ok', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+
+        $agentic = new Agentic(
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+            defaults: ['max_iterations' => 5, 'scene' => 'http'],
+        );
+
+        $result = $agentic->runWithConfig(
+            ['persona' => new Persona(name: 'Bot', content: 'You are a bot.')],
+            [['role' => 'user', 'content' => 'hi']],
+        );
+
+        $this->assertTrue($result->isComplete());
+    }
+
+    public function testRunStreamWithConfigWorks(): void
+    {
+        $llm = $this->createMockLlm([['content' => 'streamed', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+
+        $agentic = new Agentic(
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+        );
+
+        $result = $agentic->runStreamWithConfig(
+            ['persona' => new Persona(name: 'Bot', content: 'You are a bot.')],
+            [['role' => 'user', 'content' => 'hi']],
+        );
+
+        $this->assertTrue($result->isComplete());
+        $this->assertSame('streamed', $result->content);
+    }
+
+    // ── conversation_id support ──
+
+    public function testRunWithConfigLoadsHistoryAndAppendsWithConversationId(): void
+    {
+        $messageStore = new MemoryMessageStore();
+
+        // Pre-seed history
+        $messageStore->append('conv-123', [
+            ['role' => 'user', 'content' => 'Previous question'],
+            ['role' => 'assistant', 'content' => 'Previous answer'],
+        ]);
+
+        $callCount = 0;
+        $capturedMessages = null;
+        $llm = new LlmClient(
+            providerConfigs: ['test' => ['model' => 'test']],
+            defaultProvider: 'test',
+            adapterFactory: function (string $type, string $provider, array $config, array $messages, array $options) use (&$callCount, &$capturedMessages) {
+                ++$callCount;
+                $capturedMessages = $messages;
+                return ['content' => 'New answer', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]];
+            },
+        );
+
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $agentic = new Agentic(
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+            messageStore: $messageStore,
+        );
+
+        $result = $agentic->runWithConfig(
+            ['persona' => new Persona(name: 'Bot', content: 'You are a bot.')],
+            [['role' => 'user', 'content' => 'New question']],
+            ['conversation_id' => 'conv-123'],
+        );
+
+        $this->assertTrue($result->isComplete());
+        $this->assertSame('New answer', $result->content);
+
+        // Verify history was loaded — messages sent to LLM should include prior messages
+        $this->assertNotNull($capturedMessages);
+        // System message + 2 history + 1 new = 4 messages
+        $this->assertCount(4, $capturedMessages);
+        $this->assertSame('Previous question', $capturedMessages[1]['content']);
+        $this->assertSame('Previous answer', $capturedMessages[2]['content']);
+        $this->assertSame('New question', $capturedMessages[3]['content']);
+
+        // Verify messages were appended to store
+        $stored = $messageStore->load('conv-123');
+        // Original 2 + new user + assistant response = 4
+        $this->assertCount(4, $stored);
+    }
+
+    public function testRunWithConfigWithoutConversationIdIsStateless(): void
+    {
+        $llm = $this->createMockLlm([['content' => 'Response', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+
+        $messageStore = new MemoryMessageStore();
+        $agentic = new Agentic(
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+            messageStore: $messageStore,
+        );
+
+        $result = $agentic->runWithConfig(
+            ['persona' => new Persona(name: 'Bot', content: 'You are a bot.')],
+            [['role' => 'user', 'content' => 'hi']],
+        );
+
+        $this->assertTrue($result->isComplete());
+        // No messages stored — stateless mode
+        $this->assertSame(0, count(array_filter($messageStore->load('any'))));
+    }
+
+    public function testGuardrailBlockedResultDoesNotPersistMessages(): void
+    {
+        $guardrailRunner = new GuardrailRunner();
+        $guardrailRunner->register(new class implements GuardrailInterface {
+            public function name(): string { return 'block_all'; }
+            public function checkInput(array $messages): GuardrailResult
+            {
+                return GuardrailResult::blocked('Blocked');
+            }
+            public function checkOutput(string $content): GuardrailResult
+            {
+                return GuardrailResult::ok();
+            }
+        });
+
+        $llm = $this->createMockLlm(['should not be called']);
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), $guardrailRunner, new MiddlewarePipeline());
+
+        $messageStore = new MemoryMessageStore();
+        $agentic = new Agentic(
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+            messageStore: $messageStore,
+        );
+
+        $result = $agentic->runWithConfig(
+            ['persona' => new Persona(name: 'Bot', content: 'You are a bot.')],
+            [['role' => 'user', 'content' => 'blocked input']],
+            ['conversation_id' => 'conv-blocked'],
+        );
+
+        $this->assertFalse($result->isComplete());
+        // No messages should be persisted for a blocked result
+        $this->assertSame([], $messageStore->load('conv-blocked'));
     }
 
     // ── helpers ──

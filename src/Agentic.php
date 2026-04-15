@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace ChenZhanjie\Agentic;
 
 use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
+use ChenZhanjie\Agentic\Contract\MessageStoreInterface;
 use ChenZhanjie\Agentic\Contract\SessionStoreInterface;
 use ChenZhanjie\Agentic\Event\AgentEventType;
 use ChenZhanjie\Agentic\Event\EventEmitter;
@@ -18,22 +19,15 @@ class Agentic
 {
     use EventEmitter;
 
-    /** @var array<string, array> Agent definitions from agentic/agents.php */
-    private readonly array $agentDefs;
-
-    /** @var array Default settings from agentic/agentic.php */
-    private readonly array $defaults;
-
     public function __construct(
         private readonly AgentRunner $runner,
         private readonly ToolRegistry $toolRegistry,
         private readonly PromptBuilder $promptBuilder,
         private readonly ?SessionStoreInterface $sessionStore = null,
-        array $agentDefs = [],
-        array $defaults = [],
+        private readonly ?MessageStoreInterface $messageStore = null,
+        private readonly array $agentDefs = [],
+        private readonly array $defaults = [],
     ) {
-        $this->agentDefs = $agentDefs;
-        $this->defaults = $defaults;
     }
 
     /**
@@ -74,6 +68,47 @@ class Agentic
         $config = $this->getAgentConfig($agentName);
 
         return $this->runner->run($messages, $config, $options, $onEvent);
+    }
+
+    /**
+     * Execute an agent with a dynamic config array (bypasses agent name lookup).
+     *
+     * Merges $this->defaults as the base layer, then $agentConfig on top.
+     * Supports conversation_id option for automatic history load/append.
+     *
+     * @param array $agentConfig  Full agent configuration (persona, tools, skills, etc.)
+     * @param array $messages     New messages for this turn
+     * @param array $options      Runtime options: conversation_id, runtime_context, etc.
+     */
+    public function runWithConfig(array $agentConfig, array $messages, array $options = []): AgentResult
+    {
+        $config = array_replace_recursive($this->defaults, $agentConfig);
+        $fullMessages = $this->resolveMessages($messages, $options);
+
+        $result = $this->runner->run($fullMessages, $config, $options);
+
+        if ($result->isComplete()) {
+            $this->persistMessages($options, $messages, $result);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Execute an agent with dynamic config + streaming support.
+     */
+    public function runStreamWithConfig(array $agentConfig, array $messages, ?callable $onEvent = null, array $options = []): AgentResult
+    {
+        $config = array_replace_recursive($this->defaults, $agentConfig);
+        $fullMessages = $this->resolveMessages($messages, $options);
+
+        $result = $this->runner->run($fullMessages, $config, $options, $onEvent);
+
+        if ($result->isComplete()) {
+            $this->persistMessages($options, $messages, $result);
+        }
+
+        return $result;
     }
 
     /**
@@ -167,6 +202,43 @@ class Agentic
         }
 
         return $this->runner->resume($state, $sessionId);
+    }
+
+    /**
+     * Resolve messages: load history from MessageStore if conversation_id is provided.
+     */
+    private function resolveMessages(array $newMessages, array $options): array
+    {
+        $conversationId = $options['conversation_id'] ?? null;
+
+        if ($conversationId === null || $this->messageStore === null) {
+            return $newMessages;
+        }
+
+        $history = $this->messageStore->load($conversationId);
+
+        if (empty($history)) {
+            return $newMessages;
+        }
+
+        return array_merge($history, $newMessages);
+    }
+
+    /**
+     * Persist new messages to MessageStore after a successful run.
+     */
+    private function persistMessages(array $options, array $newMessages, AgentResult $result): void
+    {
+        $conversationId = $options['conversation_id'] ?? null;
+
+        if ($conversationId === null || $this->messageStore === null) {
+            return;
+        }
+
+        $toAppend = $newMessages;
+        $toAppend[] = ['role' => 'assistant', 'content' => $result->content];
+
+        $this->messageStore->append($conversationId, $toAppend);
     }
 
     /**

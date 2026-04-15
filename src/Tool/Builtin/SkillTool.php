@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic\Tool\Builtin;
 
+use ChenZhanjie\Agentic\Contract\SkillInterface;
 use ChenZhanjie\Agentic\Contract\ToolInterface;
 use ChenZhanjie\Agentic\Skill\SkillRegistry;
 
@@ -50,6 +51,7 @@ class SkillTool implements ToolInterface
     public function execute(array $arguments): string
     {
         $name = (string) ($arguments['name'] ?? '');
+        /** @var SkillInterface|null $skill */
         $skill = $this->skillRegistry->get($name);
 
         if ($skill === null) {

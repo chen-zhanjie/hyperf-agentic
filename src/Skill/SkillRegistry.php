@@ -3,14 +3,16 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic\Skill;
 
+use ChenZhanjie\Agentic\Contract\SkillInterface;
+
 class SkillRegistry
 {
-    /** @var array<string, Skill> */
+    /** @var array<string, SkillInterface> */
     private array $skills = [];
 
-    public function register(Skill $skill): void
+    public function register(SkillInterface $skill): void
     {
-        $this->skills[$skill->name] = $skill;
+        $this->skills[$skill->name()] = $skill;
     }
 
     public function loadFromDirectory(string $dir): void
@@ -23,7 +25,7 @@ class SkillRegistry
         }
     }
 
-    public function get(string $name): ?Skill
+    public function get(string $name): ?SkillInterface
     {
         return $this->skills[$name] ?? null;
     }
@@ -35,12 +37,12 @@ class SkillRegistry
             ? $this->skills
             : array_intersect_key($this->skills, array_flip($enabledNames));
 
-        return array_filter($pool, fn(Skill $s) => $s->autoInvoke);
+        return array_filter($pool, fn(SkillInterface $s) => $s->autoInvoke());
     }
 
     public function getUserInvocable(): array
     {
-        return array_filter($this->skills, fn(Skill $s) => $s->userInvocable);
+        return array_filter($this->skills, fn(SkillInterface $s) => $s->userInvocable());
     }
 
     /** Level 1: description index for cached prompt */
@@ -65,7 +67,7 @@ class SkillRegistry
         $tools = [];
         foreach ($skillNames as $name) {
             if (isset($this->skills[$name])) {
-                $tools = array_merge($tools, $this->skills[$name]->tools);
+                $tools = array_merge($tools, $this->skills[$name]->tools());
             }
         }
         return array_unique($tools);

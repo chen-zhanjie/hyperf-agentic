@@ -3,19 +3,26 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic\Skill;
 
+use ChenZhanjie\Agentic\Contract\SkillInterface;
 use Symfony\Component\Yaml\Yaml;
 
-class Skill
+class Skill implements SkillInterface
 {
     public function __construct(
-        public readonly string $name,
-        public readonly string $description,
-        public readonly string $directory,
-        public readonly string $filePath,
-        public readonly array $tools = [],
-        public readonly bool $autoInvoke = true,
-        public readonly bool $userInvocable = true,
+        private readonly string $name,
+        private readonly string $description,
+        private readonly string $directory,
+        private readonly string $filePath,
+        private readonly array $tools = [],
+        private readonly bool $autoInvoke = true,
+        private readonly bool $userInvocable = true,
     ) {}
+
+    public function name(): string { return $this->name; }
+    public function description(): string { return $this->description; }
+    public function tools(): array { return $this->tools; }
+    public function autoInvoke(): bool { return $this->autoInvoke; }
+    public function userInvocable(): bool { return $this->userInvocable; }
 
     public static function fromMarkdownFile(string $filePath): self
     {

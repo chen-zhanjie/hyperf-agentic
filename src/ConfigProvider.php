@@ -32,6 +32,7 @@ class ConfigProvider
             // Layer 1: Foundation interfaces → implementations
             Contract\ContextEngineInterface::class => NullContextEngine::class,
             Contract\MemoryProviderInterface::class => NullMemoryProvider::class,
+            Contract\MessageStoreInterface::class => Session\MemoryMessageStore::class,
             Contract\TraceExporterInterface::class => Tracing\LogTraceExporter::class,
 
             // Layer 2: Subsystems

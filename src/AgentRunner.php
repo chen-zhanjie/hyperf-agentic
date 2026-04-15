@@ -7,6 +7,7 @@ use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
 use ChenZhanjie\Agentic\Event\AgentEventType;
 use ChenZhanjie\Agentic\Event\EventEmitter;
 use ChenZhanjie\Agentic\Persona\Persona;
+use ChenZhanjie\Agentic\Skill\SkillRegistry;
 use ChenZhanjie\Agentic\Tool\Builtin\AskTool;
 
 /**
@@ -24,12 +25,16 @@ class AgentRunner
     /** @var HumanInputResolverInterface|null Injected before dispatch for AskTool */
     private ?HumanInputResolverInterface $humanInputResolver = null;
 
+    /** @var GuardrailRunner|null Active guardrails for current run (per-agent filtered) */
+    private ?GuardrailRunner $activeGuardrails = null;
+
     public function __construct(
         private readonly LlmClient $llmClient,
         private readonly PromptBuilder $promptBuilder,
         private readonly ToolRegistry $toolRegistry,
         private readonly GuardrailRunner $guardrailRunner,
         private readonly MiddlewarePipeline $middleware,
+        private readonly ?SkillRegistry $skillRegistry = null,
     ) {}
 
     /**
@@ -96,7 +101,15 @@ class AgentRunner
             $activeRegistry = $this->toolRegistry->only($toolWhitelist);
         }
 
+        // Resolve active guardrails (per-agent filtering)
+        $this->activeGuardrails = $this->guardrailRunner;
+        $guardrailWhitelist = $agentConfig['guardrails'] ?? [];
+        if (!empty($guardrailWhitelist)) {
+            $this->activeGuardrails = $this->guardrailRunner->only($guardrailWhitelist);
+        }
+
         $toolSchemas = $activeRegistry->getAvailableSchemas();
+        $enabledSkills = $agentConfig['skills'] ?? [];
         $systemMessage = $this->promptBuilder->build(
             persona: $persona,
             agentName: $agentName,
@@ -105,6 +118,8 @@ class AgentRunner
             budget: $budget,
             systemPrompt: $systemPrompt,
             scene: $scene,
+            skillRegistry: $this->skillRegistry,
+            enabledSkills: $enabledSkills,
             costBudget: $costBudget,
         );
 
@@ -144,9 +159,21 @@ class AgentRunner
     /**
      * Execute the agent conversation loop.
      *
-     * @param array         $messages    Conversation history
-     * @param array         $agentConfig Agent configuration
-     * @param array         $options     Runtime overrides
+     * @param array $messages Conversation history. Each message is an array with:
+     *   - role:    string       'user' | 'assistant' | 'tool'
+     *   - content: string|null  Text content (null when tool_calls present)
+     *   - tool_calls: array     (assistant only) Array of tool call objects
+     *   - tool_call_id: string  (tool only) ID of the tool call being answered
+     * @param array $agentConfig Agent configuration:
+     *   - persona:          Persona|string|null  Persona object, markdown string, or null for default
+     *   - tools:            string[]             Tool name whitelist (empty = all tools)
+     *   - skills:           string[]             Skill name whitelist (empty = all skills)
+     *   - system_prompt:    string               Additional system prompt text
+     *   - max_iterations:   int                  Max iteration rounds (default: 15)
+     *   - max_cost_tokens:  int                  Max total token budget (default: unlimited)
+     *   - scene:            string               Runtime scene: 'http', 'cli', etc.
+     *   - guardrails:       string[]             Guardrail name whitelist (empty = all guardrails)
+     * @param array         $options     Runtime overrides (runtime_context, etc.)
      * @param callable|null $onEvent     Event callback: callable(string $type, array $payload): void
      */
     public function run(
@@ -156,6 +183,7 @@ class AgentRunner
         ?callable $onEvent = null,
     ): AgentResult {
         $startTime = hrtime(true);
+        $this->promptBuilder->reset();
 
         // Phase 1: Setup
         $maxIterations = (int) ($agentConfig['max_iterations'] ?? 15);
@@ -175,8 +203,15 @@ class AgentRunner
             $activeRegistry = $this->toolRegistry->only($toolWhitelist);
         }
 
+        // Resolve active guardrails (per-agent filtering)
+        $this->activeGuardrails = $this->guardrailRunner;
+        $guardrailWhitelist = $agentConfig['guardrails'] ?? [];
+        if (!empty($guardrailWhitelist)) {
+            $this->activeGuardrails = $this->guardrailRunner->only($guardrailWhitelist);
+        }
+
         // Phase 2: Input guardrails
-        $guardrailResult = $this->guardrailRunner->checkInput($messages);
+        $guardrailResult = $this->activeGuardrails->checkInput($messages);
         if ($guardrailResult !== null) {
             $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
                 'type' => 'input',
@@ -188,6 +223,7 @@ class AgentRunner
 
         // Phase 3: System prompt resolution
         $toolSchemas = $activeRegistry->getAvailableSchemas();
+        $enabledSkills = $agentConfig['skills'] ?? [];
         $systemMessage = $this->promptBuilder->build(
             persona: $persona,
             agentName: $persona->name,
@@ -196,6 +232,8 @@ class AgentRunner
             budget: $budget,
             systemPrompt: $systemPrompt,
             scene: $scene,
+            skillRegistry: $this->skillRegistry,
+            enabledSkills: $enabledSkills,
             costBudget: $costBudget,
         );
 
@@ -337,7 +375,7 @@ class AgentRunner
         if (empty($toolCalls)) {
             $textContent = is_string($content) ? $content : (string) ($content ?? '');
 
-            $outputGuardResult = $this->guardrailRunner->checkOutput($textContent);
+            $outputGuardResult = $this->activeGuardrails->checkOutput($textContent);
             if ($outputGuardResult !== null) {
                 $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
                     'type' => 'output',
@@ -444,7 +482,7 @@ class AgentRunner
             $textContent = is_string($content) ? $content : (string) ($content ?? '');
 
             // Phase 7: Output guardrail check
-            $outputGuardResult = $this->guardrailRunner->checkOutput($textContent);
+            $outputGuardResult = $this->activeGuardrails->checkOutput($textContent);
             if ($outputGuardResult !== null) {
                 $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
                     'type' => 'output',

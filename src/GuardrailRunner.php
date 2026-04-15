@@ -65,4 +65,24 @@ class GuardrailRunner
         }
         return null;
     }
+
+    /**
+     * Filter guardrails by names, returns new instance (immutable).
+     * Empty $names returns all guardrails (no filtering).
+     *
+     * @param string[] $names Guardrail names to keep
+     */
+    public function only(array $names): self
+    {
+        if (empty($names)) {
+            return clone $this;
+        }
+
+        $filtered = clone $this;
+        $filtered->guardrails = array_filter(
+            $this->guardrails,
+            fn(GuardrailInterface $g) => in_array($g->name(), $names, true),
+        );
+        return $filtered;
+    }
 }

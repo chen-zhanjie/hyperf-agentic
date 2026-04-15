@@ -223,6 +223,71 @@ class GuardrailRunnerTest extends TestCase
         $this->assertSame('test output content', $guardrail->captured);
     }
 
+    // ── only() per-agent filtering ──
+
+    public function testOnlyReturnsNewInstanceWithFilteredGuardrails(): void
+    {
+        $safety = $this->createStubGuardrail('safety', true, 'Blocked by safety');
+        $pii = $this->createStubGuardrail('pii', true, 'Blocked by pii');
+        $content = $this->createStubGuardrail('content', true, 'Blocked by content');
+
+        $runner = new GuardrailRunner();
+        $runner->register($safety);
+        $runner->register($pii);
+        $runner->register($content);
+
+        // Filter to only 'pii'
+        $filtered = $runner->only(['pii']);
+
+        $result = $filtered->checkInput([['role' => 'user', 'content' => 'test']]);
+        $this->assertNotNull($result);
+        $this->assertSame('Blocked by pii', $result->reason);
+    }
+
+    public function testOnlyDoesNotMutateOriginalRunner(): void
+    {
+        $safety = $this->createStubGuardrail('safety', true, 'Safety');
+        $pii = $this->createStubGuardrail('pii', true, 'PII');
+
+        $runner = new GuardrailRunner();
+        $runner->register($safety);
+        $runner->register($pii);
+
+        $filtered = $runner->only(['pii']);
+
+        // Original runner still has safety guardrail — should trigger safety first
+        $result = $runner->checkInput([['role' => 'user', 'content' => 'test']]);
+        $this->assertSame('Safety', $result->reason);
+    }
+
+    public function testOnlyWithEmptyNamesReturnsAllGuardrails(): void
+    {
+        $safety = $this->createStubGuardrail('safety', true, 'Safety');
+
+        $runner = new GuardrailRunner();
+        $runner->register($safety);
+
+        $filtered = $runner->only([]);
+        $result = $filtered->checkInput([['role' => 'user', 'content' => 'test']]);
+
+        $this->assertSame('Safety', $result->reason);
+    }
+
+    public function testOnlyFiltersOutputGuardrails(): void
+    {
+        $safety = $this->createStubGuardrail('safety', true, 'Safety output');
+        $pii = $this->createStubGuardrail('pii', true, 'PII output');
+
+        $runner = new GuardrailRunner();
+        $runner->register($safety);
+        $runner->register($pii);
+
+        $filtered = $runner->only(['pii']);
+        $result = $filtered->checkOutput('test');
+
+        $this->assertSame('PII output', $result->reason);
+    }
+
     // ── helpers ──
 
     private function createStubGuardrail(

@@ -8,14 +8,15 @@ use ChenZhanjie\Agentic\AgentResult;
 use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\Contract\GuardrailInterface;
 use ChenZhanjie\Agentic\Contract\MiddlewareInterface;
+use ChenZhanjie\Agentic\Contract\SkillInterface;
 use ChenZhanjie\Agentic\Contract\ToolInterface;
 use ChenZhanjie\Agentic\GuardrailResult;
 use ChenZhanjie\Agentic\GuardrailRunner;
-use ChenZhanjie\Agentic\IterationBudget;
 use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\PromptBuilder;
+use ChenZhanjie\Agentic\Skill\SkillRegistry;
 use ChenZhanjie\Agentic\ToolRegistry;
 
 class AgentRunnerTest extends TestCase
@@ -706,6 +707,7 @@ class AgentRunnerTest extends TestCase
         ?ToolRegistry $toolRegistry = null,
         ?GuardrailRunner $guardrailRunner = null,
         ?MiddlewarePipeline $pipeline = null,
+        ?SkillRegistry $skillRegistry = null,
     ): AgentRunner {
         return new AgentRunner(
             llmClient: $llmClient,
@@ -713,6 +715,7 @@ class AgentRunnerTest extends TestCase
             toolRegistry: $toolRegistry ?? new ToolRegistry(),
             guardrailRunner: $guardrailRunner ?? new GuardrailRunner(),
             middleware: $pipeline ?? new MiddlewarePipeline(),
+            skillRegistry: $skillRegistry,
         );
     }
 
@@ -797,5 +800,114 @@ class AgentRunnerTest extends TestCase
     private function usage(int $prompt, int $completion): array
     {
         return ['prompt_tokens' => $prompt, 'completion_tokens' => $completion];
+    }
+
+    // ── Skills config wiring ──
+
+    public function testSkillsWhitelistPassedToPromptBuilder(): void
+    {
+        // Register two skills, but only enable one in the agent config
+        $skillRegistry = new SkillRegistry();
+        $skillRegistry->register(new class implements SkillInterface {
+            public function name(): string { return 'query-builder'; }
+            public function description(): string { return 'Build SQL queries'; }
+            public function toDescriptionLine(): string { return '- query-builder: Build SQL queries'; }
+            public function toFullInstructions(): string { return 'Full query builder instructions'; }
+            public function loadResource(string $relativePath): ?string { return null; }
+            public function tools(): array { return []; }
+            public function autoInvoke(): bool { return true; }
+            public function userInvocable(): bool { return true; }
+        });
+        $skillRegistry->register(new class implements SkillInterface {
+            public function name(): string { return 'report-gen'; }
+            public function description(): string { return 'Generate reports'; }
+            public function toDescriptionLine(): string { return '- report-gen: Generate reports'; }
+            public function toFullInstructions(): string { return 'Full report instructions'; }
+            public function loadResource(string $relativePath): ?string { return null; }
+            public function tools(): array { return []; }
+            public function autoInvoke(): bool { return true; }
+            public function userInvocable(): bool { return true; }
+        });
+
+        $capturedSystemMsg = null;
+        $llm = new LlmClient(
+            providerConfigs: ['test' => ['model' => 'test']],
+            defaultProvider: 'test',
+            adapterFactory: function (string $type, string $provider, array $config, array $messages, array $options) use (&$capturedSystemMsg) {
+                $capturedSystemMsg = $messages[0]['content'] ?? '';
+                return ['content' => 'done', 'usage' => $this->usage(50, 10)];
+            },
+        );
+
+        $runner = $this->createRunner($llm, skillRegistry: $skillRegistry);
+
+        $runner->run(
+            [['role' => 'user', 'content' => 'hi']],
+            array_merge($this->defaultConfig(), [
+                'skills' => ['query-builder'],
+            ]),
+        );
+
+        // Only query-builder should appear in the system prompt, not report-gen
+        $this->assertNotNull($capturedSystemMsg);
+        $this->assertStringContainsString('query-builder', $capturedSystemMsg);
+        $this->assertStringNotContainsString('report-gen', $capturedSystemMsg);
+    }
+
+    public function testSkillsConfigWithNoSkillRegistryDoesNotError(): void
+    {
+        $llm = $this->createMockLlm([
+            ['content' => 'done', 'usage' => $this->usage(50, 10)],
+        ]);
+
+        // No SkillRegistry passed — skills config is ignored
+        $runner = $this->createRunner($llm);
+
+        $result = $runner->run(
+            [['role' => 'user', 'content' => 'hi']],
+            array_merge($this->defaultConfig(), [
+                'skills' => ['some-skill'],
+            ]),
+        );
+
+        $this->assertTrue($result->isComplete());
+    }
+
+    // ── PromptBuilder reset between runs ──
+
+    public function testPromptBuilderResetBetweenRunsPreventsCacheLeak(): void
+    {
+        // PromptBuilder caches the system prompt. If run() doesn't call reset(),
+        // Agent A's cached prompt leaks into Agent B's run — B's persona is ignored
+        // because build() skips buildCachedPrompt() when cache is non-null.
+        $llm = $this->createMockLlm([
+            ['content' => 'First response', 'usage' => $this->usage(50, 10)],
+            ['content' => 'Second response', 'usage' => $this->usage(50, 10)],
+        ]);
+
+        $builder = new PromptBuilder();
+        $runner = new AgentRunner($llm, $builder, new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+
+        // Run 1: Persona Alpha
+        $runner->run(
+            [['role' => 'user', 'content' => 'hi']],
+            array_merge($this->defaultConfig(), [
+                'persona' => new Persona(name: 'Alpha', content: 'You are Agent Alpha.'),
+            ]),
+        );
+
+        // Run 2: Persona Beta — must not see Alpha's cached prompt
+        $runner->run(
+            [['role' => 'user', 'content' => 'hi']],
+            array_merge($this->defaultConfig(), [
+                'persona' => new Persona(name: 'Beta', content: 'You are Agent Beta.'),
+            ]),
+        );
+
+        // The cached prompt should reflect Beta (the last run), not Alpha
+        $cached = $builder->getCachedPrompt();
+        $this->assertNotNull($cached);
+        $this->assertStringContainsString('Agent Beta', $cached);
+        $this->assertStringNotContainsString('Agent Alpha', $cached);
     }
 }
