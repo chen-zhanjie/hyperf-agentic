@@ -98,16 +98,18 @@ $result = $agentic->runWithConfig(
 
 | Document | Description |
 |----------|-------------|
-| [Getting Started](docs/getting-started.md) | Installation and quick start |
-| [Configuration](docs/configuration.md) | Full configuration reference |
-| [API Reference](docs/api.md) | Agentic facade method reference |
-| [Tools](docs/tools.md) | Tool system: registration, custom tools, built-ins |
-| [Skills](docs/skills.md) | 3-level progressive disclosure skill system |
-| [Guardrails](docs/guardrails.md) | Input/output safety checks |
-| [Conversations](docs/conversations.md) | Multi-turn conversation persistence |
-| [Database Agents](docs/database-agents.md) | Database-driven dynamic agent creation |
-| [Architecture](docs/architecture.md) | 5-layer architecture overview |
-| [Changelog](docs/changelog.md) | Version history |
+| [Getting Started](docs/en/getting-started.md) | Installation and quick start |
+| [Configuration](docs/en/configuration.md) | Full configuration reference |
+| [API Reference](docs/en/api.md) | Agentic facade method reference |
+| [Tools](docs/en/tools.md) | Tool system: registration, custom tools, built-ins |
+| [Skills](docs/en/skills.md) | 3-level progressive disclosure skill system |
+| [Guardrails](docs/en/guardrails.md) | Input/output safety checks |
+| [Conversations](docs/en/conversations.md) | Multi-turn conversation persistence |
+| [Database Agents](docs/en/database-agents.md) | Database-driven dynamic agent creation |
+| [Architecture](docs/en/architecture.md) | 5-layer architecture overview |
+| [Changelog](docs/en/changelog.md) | Version history |
+
+> 简体中文文档：[docs/zh-CN/](docs/zh-CN/)
 
 ## Architecture
 

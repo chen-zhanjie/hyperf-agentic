@@ -98,18 +98,16 @@ $result = $agentic->runWithConfig(
 
 | 文档 | 说明 |
 |------|------|
-| [快速开始](docs/zh-CN/getting-started.md) | 安装与快速开始 |
-| [配置参考](docs/zh-CN/configuration.md) | 完整配置项说明 |
-| [API 参考](docs/zh-CN/api.md) | Agentic 门面方法参考 |
-| [工具系统](docs/zh-CN/tools.md) | 工具注册、自定义工具、内置工具 |
-| [技能系统](docs/zh-CN/skills.md) | 3 级渐进式披露技能系统 |
-| [安全护栏](docs/zh-CN/guardrails.md) | 输入/输出安全检查 |
-| [对话持久化](docs/zh-CN/conversations.md) | 多轮对话历史管理 |
-| [数据库 Agent](docs/zh-CN/database-agents.md) | 数据库驱动动态 Agent |
-| [架构概览](docs/zh-CN/architecture.md) | 5 层架构设计 |
-| [更新日志](docs/zh-CN/changelog.md) | 版本变更记录 |
-
-> English docs: [docs/en/](docs/en/)
+| [快速开始](docs/getting-started.md) | 安装与快速开始 |
+| [配置参考](docs/configuration.md) | 完整配置项说明 |
+| [API 参考](docs/api.md) | Agentic 门面方法参考 |
+| [工具系统](docs/tools.md) | 工具注册、自定义工具、内置工具 |
+| [技能系统](docs/skills.md) | 3 级渐进式披露技能系统 |
+| [安全护栏](docs/guardrails.md) | 输入/输出安全检查 |
+| [对话持久化](docs/conversations.md) | 多轮对话历史管理 |
+| [数据库 Agent](docs/database-agents.md) | 数据库驱动动态 Agent |
+| [架构概览](docs/architecture.md) | 5 层架构设计 |
+| [更新日志](docs/changelog.md) | 版本变更记录 |
 
 ## 架构
 
