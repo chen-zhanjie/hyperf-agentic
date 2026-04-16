@@ -50,6 +50,8 @@ class SseWriter
                 ]),
                 'budget_exceeded' => $this->finish([], 'length'),
                 'guardrail_blocked' => $this->finish([], 'content_filter'),
+                'error' => $this->finish([], 'stop'),
+                'suspended' => $this->finish([], 'stop'),
                 default => null,
             };
         };

@@ -287,10 +287,8 @@ class Agentic
      */
     private function resolveAgentConfig(Agent|array $agentConfig): array
     {
-        $config = $agentConfig instanceof Agent
+        return $agentConfig instanceof Agent
             ? array_replace_recursive($this->defaults, $agentConfig->toArray())
             : array_replace_recursive($this->defaults, $agentConfig);
-
-        return $config;
     }
 }

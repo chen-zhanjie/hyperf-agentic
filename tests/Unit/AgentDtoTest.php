@@ -106,6 +106,25 @@ class AgentDtoTest extends TestCase
         $this->assertSame('You are a helpful assistant.', $agent->persona);
     }
 
+    public function testFromArrayWithArrayPersonaDerivesName(): void
+    {
+        $agent = Agent::fromArray([
+            'persona' => ['name' => 'Bot', 'content' => 'You are a bot.'],
+        ]);
+
+        $this->assertSame('Bot', $agent->name);
+    }
+
+    public function testFromArrayWithPersonaObjectDerivesName(): void
+    {
+        $persona = new Persona(name: 'Expert', content: 'You are an expert.');
+        $agent = Agent::fromArray([
+            'persona' => $persona,
+        ]);
+
+        $this->assertSame('Expert', $agent->name);
+    }
+
     public function testToArrayRoundTrip(): void
     {
         $agent = new Agent(

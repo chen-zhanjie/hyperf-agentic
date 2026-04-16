@@ -390,4 +390,48 @@ class SseWriterTest extends TestCase
         $data = json_decode($chunks[0]['data'], true);
         $this->assertSame('tool_calls', $data['choices'][0]['finish_reason']);
     }
+
+    // ── Error and suspended events ──
+
+    public function testErrorEventClosesStreamGracefully(): void
+    {
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
+        $onEvent('started', ['agent' => 'Test']);
+        $onEvent('text_delta', ['content' => 'Hi']);
+        $buf->value = '';
+
+        $onEvent('error', ['message' => 'something went wrong']);
+
+        $chunks = $this->parseSse($buf->value);
+        // Should produce: finish chunk + [DONE]
+        $this->assertGreaterThanOrEqual(2, count($chunks));
+
+        $finishChunk = $chunks[count($chunks) - 2];
+        $data = json_decode($finishChunk['data'], true);
+        $this->assertSame('stop', $data['choices'][0]['finish_reason']);
+
+        $doneChunk = $chunks[count($chunks) - 1];
+        $this->assertSame('done', $doneChunk['type']);
+    }
+
+    public function testSuspendedEventClosesStreamGracefully(): void
+    {
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
+        $onEvent('started', ['agent' => 'Test']);
+        $buf->value = '';
+
+        $onEvent('suspended', ['session_id' => 'sess-123']);
+
+        $chunks = $this->parseSse($buf->value);
+        $this->assertGreaterThanOrEqual(2, count($chunks));
+
+        $finishChunk = $chunks[count($chunks) - 2];
+        $data = json_decode($finishChunk['data'], true);
+        $this->assertSame('stop', $data['choices'][0]['finish_reason']);
+
+        $doneChunk = $chunks[count($chunks) - 1];
+        $this->assertSame('done', $doneChunk['type']);
+    }
 }

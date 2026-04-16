@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic\LlmAdapter;
 
+use ChenZhanjie\Agentic\Contract\LlmAdapterInterface;
+
 /**
  * Anthropic Messages API adapter.
  *
@@ -11,7 +13,7 @@ namespace ChenZhanjie\Agentic\LlmAdapter;
  *
  * Stateless: all streaming state is local to each chatStream() call.
  */
-class AnthropicAdapter implements \ChenZhanjie\Agentic\Contract\LlmAdapterInterface
+class AnthropicAdapter implements LlmAdapterInterface
 {
     public function __construct(
         private readonly string $apiKey,
@@ -222,7 +224,7 @@ class AnthropicAdapter implements \ChenZhanjie\Agentic\Contract\LlmAdapterInterf
                     ],
                 ];
             } elseif ($type === 'thinking') {
-                $reasoningContent = $block['thinking'] ?? null;
+                $reasoningContent = ($reasoningContent ?? '') . ($block['thinking'] ?? '');
             }
         }
 
@@ -308,6 +310,11 @@ class AnthropicAdapter implements \ChenZhanjie\Agentic\Contract\LlmAdapterInterf
 
             $type = $data['type'] ?? '';
 
+            // Ensure usage is initialized (guards against missing message_start)
+            if (!isset($streamState['usage'])) {
+                $streamState['usage'] = ['prompt_tokens' => 0, 'completion_tokens' => 0];
+            }
+
             // message_start — capture initial usage
             if ($type === 'message_start') {
                 $message = $data['message'] ?? [];
@@ -367,9 +374,7 @@ class AnthropicAdapter implements \ChenZhanjie\Agentic\Contract\LlmAdapterInterf
                     $streamState['finish_reason'] = $delta['stop_reason'];
                 }
                 $usage = $data['usage'] ?? [];
-                if (isset($streamState['usage'])) {
-                    $streamState['usage']['completion_tokens'] = $usage['output_tokens'] ?? 0;
-                }
+                $streamState['usage']['completion_tokens'] = $usage['output_tokens'] ?? 0;
             }
 
             if ($type === 'message_stop') {

@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic\LlmAdapter;
 
+use ChenZhanjie\Agentic\Contract\LlmAdapterInterface;
+
 /**
  * OpenAI-compatible chat completions adapter.
  *
@@ -11,7 +13,7 @@ namespace ChenZhanjie\Agentic\LlmAdapter;
  *
  * Stateless: all streaming state is local to each chatStream() call.
  */
-class OpenAiAdapter implements \ChenZhanjie\Agentic\Contract\LlmAdapterInterface
+class OpenAiAdapter implements LlmAdapterInterface
 {
     public function __construct(
         private readonly string $apiKey,

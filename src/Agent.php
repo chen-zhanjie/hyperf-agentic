@@ -45,9 +45,11 @@ class Agent
             $permissionMode = PermissionMode::from($config['permission_mode']);
         }
 
+        $persona = self::resolvePersona($config['persona'] ?? null);
+
         return new self(
-            name: $config['name'] ?? $config['persona']->name ?? 'Assistant',
-            persona: $config['persona'] ?? null,
+            name: $config['name'] ?? self::extractPersonaName($persona) ?? 'Assistant',
+            persona: $persona,
             tools: $config['tools'] ?? [],
             skills: $config['skills'] ?? [],
             guardrails: $config['guardrails'] ?? [],
@@ -94,5 +96,30 @@ class Agent
             'async_guardrail_timeout' => $this->asyncGuardrailTimeout,
             'cancellation_timeout_ms' => $this->cancellationTimeoutMs,
         ], fn(mixed $v): bool => $v !== null && $v !== '' && $v !== []);
+    }
+
+    /**
+     * Resolve persona input to Persona object, string, or null.
+     */
+    private static function resolvePersona(mixed $persona): Persona|string|null
+    {
+        if ($persona instanceof Persona || is_string($persona) || $persona === null) {
+            return $persona;
+        }
+        if (is_array($persona)) {
+            return Persona::fromArray($persona);
+        }
+        return null;
+    }
+
+    /**
+     * Extract a name from a resolved persona.
+     */
+    private static function extractPersonaName(Persona|string|null $persona): ?string
+    {
+        if ($persona instanceof Persona) {
+            return $persona->name;
+        }
+        return null;
     }
 }
