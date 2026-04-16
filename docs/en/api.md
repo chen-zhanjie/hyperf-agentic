@@ -104,8 +104,14 @@ public function runWithConfig(array $agentConfig, array $messages, array $option
     'tools' => ['search', 'ask'],        // Tool whitelist
     'skills' => ['guide'],               // Skill whitelist
     'guardrails' => ['content_filter'],  // Guardrail whitelist
+    'guardrail_modes' => ['content_filter' => 'async'], // Guardrail mode overrides
+    'tool_permissions' => [              // Tool permission rules
+        'allow' => ['search_*', 'ask'],
+        'deny' => ['exec_*'],
+    ],
     'max_iterations' => 15,              // Max iterations
     'system_prompt' => 'Extra rules',    // Additional system prompt
+    'cancellation_timeout_ms' => 30000,  // Auto-cancel after 30s
 ]
 ```
 

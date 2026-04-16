@@ -1,4 +1,4 @@
-# Architecture
+# 架构
 
 SDK 采用 5 层架构设计，从底层接口到上层入口逐步构建。
 
@@ -7,14 +7,16 @@ SDK 采用 5 层架构设计，从底层接口到上层入口逐步构建。
 ```
 Layer 1: Contract（接口层）
     │   ToolInterface, GuardrailInterface, SkillInterface,
-    │   MessageStoreInterface, SessionStoreInterface, ...
+    │   MessageStoreInterface, SessionStoreInterface,
+    │   ToolGuardrailInterface, ToolPermissionPolicyInterface,
+    │   GuardrailAuditLoggerInterface, RiskyToolInterface, ...
     │
 Layer 2: Subsystems（子系统）
-    │   ToolRegistry, GuardrailRunner, SkillRegistry,
-    │   PromptBuilder, LlmClient, MiddlewarePipeline
+    │   ToolRegistry, GuardrailRunner, ToolGuardrailRunner,
+    │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline
     │
 Layer 3: Agent Core（Agent 核心）
-    │   AgentRunner, AgentResult, AgentConfigManager
+    │   AgentRunner, AgentRunContext, AgentResult, AgentConfigManager
     │
 Layer 4: Facade（门面）
     │   Agentic — 统一入口
@@ -35,6 +37,8 @@ $agentConfig = [
     'tools' => ['search'],
     'skills' => ['guide'],
     'max_iterations' => 15,
+    'tool_permissions' => ['deny' => ['exec_*']],
+    'cancellation_timeout_ms' => 30000,
 ];
 ```
 
@@ -68,10 +72,11 @@ AgentRunner 实现了标准的 ReAct（Reasoning + Acting）循环：
 │  ┌───────────────────────┐  │
 │  │ LLM 返回工具调用？     │  │
 │  │  是 → 执行工具 → 继续循环 │
-│  │  否 → 退出循环          │
+│  │  否 → 退出循环          │  │
 │  └───────────────────────┘  │
 │                             │
-│  迭代次数达上限？→ BudgetExhausted │
+│  迭代次数或 Token 预算达上限？→ BudgetExhausted │
+│  CancellationToken 已取消？→ 退出循环 │
 └────────────┬────────────────┘
              │
              ▼
@@ -79,6 +84,32 @@ AgentRunner 实现了标准的 ReAct（Reasoning + Acting）循环：
 │  返回 AgentResult            │
 └─────────────────────────────┘
 ```
+
+### 工具分发链
+
+当工具调用被分发时：
+
+```
+1. 工具护栏（输入检查）        → 可拦截或修正参数
+2. 权限策略（deny/ask/allow）  → 可拒绝或要求用户确认
+3. 中间件（beforeToolCall）    → 可拦截
+4. Agent 级处理器              → 或 ToolRegistry::execute()
+5. 工具护栏（输出检查）        → 可拦截或转换输出
+6. 中间件（afterToolCall）
+```
+
+### AgentRunContext（Per-Request 上下文）
+
+`AgentRunContext` 是每次请求创建的不可变值对象，持有所有请求级状态：
+
+- 活跃护栏（按 Agent 过滤）
+- 工具护栏
+- 权限策略
+- 人工输入解析器
+- Agent 级工具处理器
+- 取消令牌
+
+这替代了单例 `AgentRunner` 上的可变实例属性，消除了 Swoole 协程下的竞态条件。
 
 ### PromptBuilder（7 层提示构建）
 
@@ -119,6 +150,8 @@ $filteredRegistry = $registry->only(['search', 'ask']);
 ```php
 // 接口 → 实现
 Contract\MessageStoreInterface::class => Session\MemoryMessageStore::class,
+Contract\ToolPermissionPolicyInterface::class => Policy\ConfigToolPermissionPolicy::class,
+Contract\GuardrailAuditLoggerInterface::class => GuardrailAuditLogger::class,
 
 // 工厂（__invoke 产生实例）
 Skill\SkillRegistry::class => SkillRegistryFactory::class,
@@ -133,10 +166,11 @@ Agentic::class => Agentic::class,
 
 Hyperf 使用协程模型。SDK 的并发安全保证：
 
-1. **PromptBuilder reset**：`AgentRunner::run()` 开头调用 `reset()`，清除上次构建的缓存。`reset()` + `build()` 之间无 I/O yield，单协程内原子操作。
-2. **不可变过滤**：`only()` 返回新实例，不影响全局单例。
-3. **局部变量**：`$systemMessage`、`$messages` 等是方法局部变量，天然隔离。
-4. **SessionStore**：每次请求使用不同的 `conversation_id` / `sessionId`，Redis 天然隔离。
+1. **AgentRunContext**：每次请求的不可变上下文替代可变实例属性，消除了并发请求共享单例 `AgentRunner` 时的竞态条件。
+2. **PromptBuilder reset**：`AgentRunner::run()` 开头调用 `reset()`，清除上次构建的缓存。`reset()` + `build()` 之间无 I/O yield，单协程内原子操作。
+3. **不可变过滤**：`only()` 返回新实例，不影响全局单例。
+4. **局部变量**：`$systemMessage`、`$messages` 等是方法局部变量，天然隔离。
+5. **SessionStore**：每次请求使用不同的 `conversation_id` / `sessionId`，Redis 天然隔离。
 
 ## 目录结构
 
@@ -145,6 +179,10 @@ src/
 ├── Contract/          # Layer 1: 接口定义
 │   ├── ToolInterface.php
 │   ├── GuardrailInterface.php
+│   ├── ToolGuardrailInterface.php
+│   ├── ToolPermissionPolicyInterface.php
+│   ├── GuardrailAuditLoggerInterface.php
+│   ├── RiskyToolInterface.php
 │   ├── SkillInterface.php
 │   ├── MessageStoreInterface.php
 │   ├── SessionStoreInterface.php
@@ -154,7 +192,10 @@ src/
 ├── Skill/             # 技能系统
 │   ├── Skill.php
 │   └── SkillRegistry.php
-├── Guardrail/         # 护栏（GuardrailResult 等）
+├── Guardrail/         # 护栏
+│   └── SchemaValidationToolGuardrail.php
+├── Policy/            # 权限策略
+│   └── ConfigToolPermissionPolicy.php
 ├── Session/           # 会话存储
 ├── Persona/           # 人设（Persona, PersonaLoader）
 ├── Loader/            # 加载器（Annotation, Config, Skill）
@@ -162,10 +203,17 @@ src/
 ├── Tracing/           # 链路追踪
 ├── Attributes/        # PHP 8 Attribute（#[AsTool] 等）
 ├── AgentRunner.php    # Layer 3: Agent 核心
+├── AgentRunContext.php # Per-Request 不可变上下文
 ├── AgentResult.php    # Agent 执行结果
 ├── PromptBuilder.php  # 提示构建器
 ├── ToolRegistry.php   # 工具注册表
-├── GuardrailRunner.php # 护栏运行器
+├── ToolGuardrailRunner.php  # 工具级护栏运行器
+├── ToolGuardrailResult.php  # 工具护栏结果值对象
+├── ToolRiskLevel.php  # 工具风险等级枚举
+├── ToolPermissionDecision.php # 权限决策枚举
+├── GuardrailRunner.php # 护栏运行器（含优先级 + 审计）
+├── GuardrailAuditEntry.php  # 审计日志条目
+├── GuardrailAuditLogger.php # 默认审计日志器
 ├── LlmClient.php      # LLM 客户端
 ├── Agentic.php        # Layer 4: 统一门面
 └── ConfigProvider.php # Hyperf DI 配置

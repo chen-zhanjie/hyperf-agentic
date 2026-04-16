@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-16
+
+### 新增
+
+- **AgentRunContext** — Per-Request 不可变上下文，替代单例 AgentRunner 上的可变实例属性，修复 Swoole 协程竞态条件
+- **ToolGuardrailInterface** — 工具级护栏，提供 `checkToolInput()` 和 `checkToolOutput()` 进行工具边界的输入验证和输出过滤
+- **ToolGuardrailRunner** — 顺序运行工具护栏，支持 sanitize（修正参数）和 transform（转换输出）
+- **ToolGuardrailResult** — 值对象，静态工厂：`ok()`、`blocked()`、`sanitize()`、`transformOutput()`
+- **SchemaValidationToolGuardrail** — 内置护栏，根据声明的 JSON Schema 校验工具参数（必填字段、类型匹配）
+- **ToolRiskLevel** — 枚举（LOW / MEDIUM / HIGH / CRITICAL）用于工具风险分级
+- **ToolPermissionDecision** — 枚举（ALLOW / DENY / ASK）用于权限决策
+- **RiskyToolInterface** — 扩展 ToolInterface，增加 `riskLevel()` 和 `riskDescription()`
+- **ToolPermissionPolicyInterface** — 配置驱动的工具权限策略接口
+- **ConfigToolPermissionPolicy** — 内置实现，`deny > ask > allow > 默认阈值` 优先级，支持 `fnmatch()` 通配符
+- **GuardrailEntry 优先级** — 护栏按优先级排序执行（高优先级先执行）
+- **GuardrailAuditLoggerInterface** — 护栏决策审计日志接口
+- **GuardrailAuditEntry** — 不可变审计记录，含 `guardrailName`、`phase`、`decision`、`reason`、`durationMs`、`timestamp`
+- **GuardrailAuditLogger** — 内置双通道（PSR-3 + callable）审计日志器
+- `tool_blocked` / `tool_denied` / `guardrail_decision` 事件类型，用于可观测性
+- **CancellationToken 激活** — `runLoop` 现在检查 `$context->isCancelled()` 实现协作取消
+- `cancellation_timeout_ms` Agent 配置选项，支持基于超时的自动取消
+
+### 修复
+
+- **Swoole 协程竞态条件** — `$activeGuardrails`、`$agentToolHandlers`、`$humanInputResolver` 作为请求级状态写入单例属性；已用不可变 `AgentRunContext` 替代
+- **CancellationToken 死代码** — 之前已创建但从未在循环中检查；现已通过 `AgentRunContext` 激活
+- **loadFromConfig() 优先级排序** — 配置项中非零 priority 现在会正确排序
+- **4 个 PHP 废弃警告** — 可选参数在必需参数 `$context` 之前声明，已重新排序
+
+### 变更
+
+- `GuardrailRunner::register()` 新增可选 `int $priority` 参数
+- `GuardrailRunner::loadFromConfig()` 支持 `priority` 配置键
+- `GuardrailRunner` 构造函数接受可选 `GuardrailAuditLoggerInterface`
+- `AgentRunner` 构造函数新增必需参数 `ToolGuardrailRunner` 和 `ToolPermissionPolicyInterface`
+- `dispatchTool()` 现在发出 `TOOL_BLOCKED` 和 `TOOL_DENIED` 事件
+- `ToolGuardrailRunner::checkToolInput()` sanitize 不再短路 — 后续护栏可以看到修正后的参数
+- `ConfigToolPermissionPolicy::matches()` 使用 `fnmatch()` 替代正则表达式进行通配符匹配
+
 ## [0.4.0] - 2026-04-15
 
 ### Added

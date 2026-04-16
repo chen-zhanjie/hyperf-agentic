@@ -132,7 +132,7 @@ composer install
 vendor/bin/phpunit
 ```
 
-374 tests, 637 assertions — all passing.
+500 tests, 916 assertions — all passing.
 
 ## License
 

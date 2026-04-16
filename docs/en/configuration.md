@@ -86,8 +86,12 @@ return [
 | `tools` | string[] | `[]` | Tool whitelist (empty = all available) |
 | `skills` | string[] | `[]` | Skill whitelist (empty = all available) |
 | `guardrails` | string[] | `[]` | Guardrail whitelist (empty = all active) |
+| `guardrail_modes` | array | `[]` | Guardrail mode overrides: `['name' => 'async']` |
+| `tool_permissions` | array | `[]` | Permission rules: `['allow' => [...], 'ask' => [...], 'deny' => [...]]` |
 | `max_iterations` | int\|null | `null` | Override global max_iterations |
 | `system_prompt` | string | `''` | Additional system prompt text |
+| `cancellation_timeout_ms` | int | `0` | Auto-cancel after N ms (0 = disabled) |
+| `async_guardrail_timeout` | int | `5000` | Timeout for async guardrail completion (ms) |
 
 ## tools.php — Tool Registration
 

@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-16
+
+### Added
+
+- **AgentRunContext** — Per-request immutable context, replaces mutable instance properties on singleton AgentRunner, fixes Swoole coroutine race condition
+- **ToolGuardrailInterface** — Tool-level guardrails with `checkToolInput()` and `checkToolOutput()` for input validation and output filtering at tool boundaries
+- **ToolGuardrailRunner** — Runs tool guardrails in sequence, supports sanitize (modify arguments) and transform (modify output)
+- **ToolGuardrailResult** — Value object with static factories: `ok()`, `blocked()`, `sanitize()`, `transformOutput()`
+- **SchemaValidationToolGuardrail** — Built-in guardrail validating tool arguments against declared JSON Schema (required fields, type matching)
+- **ToolRiskLevel** — Enum (LOW / MEDIUM / HIGH / CRITICAL) for tool risk classification
+- **ToolPermissionDecision** — Enum (ALLOW / DENY / ASK) for permission decisions
+- **RiskyToolInterface** — Extends ToolInterface with `riskLevel()` and `riskDescription()`
+- **ToolPermissionPolicyInterface** — Config-driven tool permission policy interface
+- **ConfigToolPermissionPolicy** — Built-in implementation with `deny > ask > allow > default threshold` priority and `fnmatch()` wildcard patterns
+- **GuardrailEntry priority** — Guardrails execute in priority order (highest first)
+- **GuardrailAuditLoggerInterface** — Audit logging interface for guardrail decisions
+- **GuardrailAuditEntry** — Immutable audit record with `guardrailName`, `phase`, `decision`, `reason`, `durationMs`, `timestamp`
+- **GuardrailAuditLogger** — Built-in dual-channel (PSR-3 + callable) audit logger
+- `tool_blocked` / `tool_denied` / `guardrail_decision` event types for observability
+- **CancellationToken activation** — `runLoop` now checks `$context->isCancelled()` for cooperative cancellation
+- `cancellation_timeout_ms` agent config option for automatic timeout-based cancellation
+
+### Fixed
+
+- **Swoole coroutine race condition** — `$activeGuardrails`, `$agentToolHandlers`, `$humanInputResolver` were per-request state written to singleton properties; replaced by immutable `AgentRunContext`
+- **CancellationToken dead code** — Was created but never checked in the loop; now active via `AgentRunContext`
+- **loadFromConfig() priority sorting** — Config entries with non-zero priority are now properly sorted
+- **4 PHP deprecation warnings** — Optional parameters declared before required `$context` parameter reordered
+
+### Changed
+
+- `GuardrailRunner::register()` now accepts optional `int $priority` parameter
+- `GuardrailRunner::loadFromConfig()` supports `priority` key in config arrays
+- `GuardrailRunner` constructor accepts optional `GuardrailAuditLoggerInterface`
+- `AgentRunner` constructor now requires `ToolGuardrailRunner` and `ToolPermissionPolicyInterface`
+- `dispatchTool()` now emits `TOOL_BLOCKED` and `TOOL_DENIED` events
+- `ToolGuardrailRunner::checkToolInput()` no longer short-circuits on sanitize — subsequent guardrails see modified arguments
+- `ConfigToolPermissionPolicy::matches()` uses `fnmatch()` instead of regex for wildcard patterns
+
 ## [0.4.0] - 2026-04-15
 
 ### Added

@@ -7,14 +7,16 @@ The SDK uses a 5-layer architecture, building from low-level interfaces to high-
 ```
 Layer 1: Contract (Interface Layer)
     │   ToolInterface, GuardrailInterface, SkillInterface,
-    │   MessageStoreInterface, SessionStoreInterface, ...
+    │   MessageStoreInterface, SessionStoreInterface,
+    │   ToolGuardrailInterface, ToolPermissionPolicyInterface,
+    │   GuardrailAuditLoggerInterface, RiskyToolInterface, ...
     │
 Layer 2: Subsystems
-    │   ToolRegistry, GuardrailRunner, SkillRegistry,
-    │   PromptBuilder, LlmClient, MiddlewarePipeline
+    │   ToolRegistry, GuardrailRunner, ToolGuardrailRunner,
+    │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline
     │
 Layer 3: Agent Core
-    │   AgentRunner, AgentResult, AgentConfigManager
+    │   AgentRunner, AgentRunContext, AgentResult, AgentConfigManager
     │
 Layer 4: Facade
     │   Agentic — unified entry point
@@ -35,6 +37,8 @@ $agentConfig = [
     'tools' => ['search'],
     'skills' => ['guide'],
     'max_iterations' => 15,
+    'tool_permissions' => ['deny' => ['exec_*']],
+    'cancellation_timeout_ms' => 30000,
 ];
 ```
 
@@ -71,7 +75,8 @@ AgentRunner implements the standard ReAct (Reasoning + Acting) loop:
 │  │  No  → Exit loop            │  │
 │  └────────────────────────────┘  │
 │                                   │
-│  Iteration limit reached? → BudgetExhausted │
+│  Iteration limit or budget? → BudgetExhausted │
+│  CancellationToken cancelled? → Exit loop │
 └────────────┬─────────────────────┘
              │
              ▼
@@ -79,6 +84,32 @@ AgentRunner implements the standard ReAct (Reasoning + Acting) loop:
 │  Return AgentResult              │
 └──────────────────────────────────┘
 ```
+
+### Tool Dispatch Chain
+
+When a tool call is dispatched:
+
+```
+1. Tool Guardrail (input check)      → can block or sanitize arguments
+2. Permission Policy (deny/ask/allow) → can deny or require user confirmation
+3. Middleware (beforeToolCall)        → can intercept
+4. Agent-level handler               → or ToolRegistry::execute()
+5. Tool Guardrail (output check)     → can block or transform output
+6. Middleware (afterToolCall)
+```
+
+### AgentRunContext (Per-Request Context)
+
+`AgentRunContext` is an immutable value object created per request, holding all per-request state:
+
+- Active guardrails (filtered per agent)
+- Tool guardrails
+- Permission policy
+- Human input resolver
+- Agent-level tool handlers
+- Cancellation token
+
+This replaces mutable instance properties on the singleton `AgentRunner`, eliminating race conditions under Swoole coroutines.
 
 ### PromptBuilder (7-Layer Prompt Construction)
 
@@ -119,6 +150,8 @@ This ensures concurrency safety in Hyperf's coroutine model — per-agent filter
 ```php
 // Interface → Implementation
 Contract\MessageStoreInterface::class => Session\MemoryMessageStore::class,
+Contract\ToolPermissionPolicyInterface::class => Policy\ConfigToolPermissionPolicy::class,
+Contract\GuardrailAuditLoggerInterface::class => GuardrailAuditLogger::class,
 
 // Factory (__invoke produces the instance)
 Skill\SkillRegistry::class => SkillRegistryFactory::class,
@@ -133,10 +166,11 @@ Agentic::class => Agentic::class,
 
 Hyperf uses a coroutine model. The SDK's concurrency safety guarantees:
 
-1. **PromptBuilder reset**: `AgentRunner::run()` calls `reset()` at the start, clearing the previous build's cache. No I/O yield between `reset()` + `build()`, making it atomic within a single coroutine.
-2. **Immutable filtering**: `only()` returns new instances, not affecting global singletons.
-3. **Local variables**: `$systemMessage`, `$messages`, etc. are method-local variables, naturally isolated.
-4. **SessionStore**: Each request uses a different `conversation_id` / `sessionId`, with Redis providing natural isolation.
+1. **AgentRunContext**: Per-request immutable context replaces mutable instance properties, eliminating race conditions between concurrent requests sharing the singleton `AgentRunner`.
+2. **PromptBuilder reset**: `AgentRunner::run()` calls `reset()` at the start, clearing the previous build's cache. No I/O yield between `reset()` + `build()`, making it atomic within a single coroutine.
+3. **Immutable filtering**: `only()` returns new instances, not affecting global singletons.
+4. **Local variables**: `$systemMessage`, `$messages`, etc. are method-local variables, naturally isolated.
+5. **SessionStore**: Each request uses a different `conversation_id` / `sessionId`, with Redis providing natural isolation.
 
 ## Directory Structure
 
@@ -145,6 +179,10 @@ src/
 ├── Contract/          # Layer 1: Interface definitions
 │   ├── ToolInterface.php
 │   ├── GuardrailInterface.php
+│   ├── ToolGuardrailInterface.php
+│   ├── ToolPermissionPolicyInterface.php
+│   ├── GuardrailAuditLoggerInterface.php
+│   ├── RiskyToolInterface.php
 │   ├── SkillInterface.php
 │   ├── MessageStoreInterface.php
 │   ├── SessionStoreInterface.php
@@ -154,7 +192,10 @@ src/
 ├── Skill/             # Skill system
 │   ├── Skill.php
 │   └── SkillRegistry.php
-├── Guardrail/         # Guardrails (GuardrailResult, etc.)
+├── Guardrail/         # Guardrails
+│   └── SchemaValidationToolGuardrail.php
+├── Policy/            # Permission policies
+│   └── ConfigToolPermissionPolicy.php
 ├── Session/           # Session storage
 ├── Persona/           # Personas (Persona, PersonaLoader)
 ├── Loader/            # Loaders (Annotation, Config, Skill)
@@ -162,10 +203,17 @@ src/
 ├── Tracing/           # Distributed tracing
 ├── Attributes/        # PHP 8 Attributes (#[AsTool], etc.)
 ├── AgentRunner.php    # Layer 3: Agent core
+├── AgentRunContext.php # Per-request immutable context
 ├── AgentResult.php    # Agent execution result
 ├── PromptBuilder.php  # Prompt builder
 ├── ToolRegistry.php   # Tool registry
-├── GuardrailRunner.php # Guardrail runner
+├── ToolGuardrailRunner.php  # Tool-level guardrail runner
+├── ToolGuardrailResult.php  # Tool guardrail result value object
+├── ToolRiskLevel.php  # Tool risk level enum
+├── ToolPermissionDecision.php # Permission decision enum
+├── GuardrailRunner.php # Guardrail runner (with priority + audit)
+├── GuardrailAuditEntry.php  # Audit log entry
+├── GuardrailAuditLogger.php # Default audit logger
 ├── LlmClient.php      # LLM client
 ├── Agentic.php        # Layer 4: Unified facade
 └── ConfigProvider.php # Hyperf DI config

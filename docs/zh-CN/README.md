@@ -130,7 +130,7 @@ composer install
 vendor/bin/phpunit
 ```
 
-374 个测试，637 个断言 — 全部通过。
+500 个测试，916 个断言 — 全部通过。
 
 ## 许可证
 
