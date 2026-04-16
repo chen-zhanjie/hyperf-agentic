@@ -83,6 +83,10 @@ public function runStream(
 | `tool_call` | 工具调用已分发 |
 | `tool_result` | 工具结果已返回 |
 | `complete` | Agent 正常结束 |
+| `error` | Agent 遇到错误 |
+| `budget_exceeded` | Token 预算超限 |
+| `guardrail_blocked` | 输出被护栏拦截 |
+| `suspended` | Agent 挂起等待人工输入 |
 
 **示例：**
 
@@ -94,6 +98,46 @@ $result = $this->agentic->runStream('general', $messages, function (string $even
     }
 });
 ```
+
+### SSE 输出
+
+使用 `SseWriter` 将流式事件格式化为 OpenAI 兼容的 SSE：
+
+```php
+use ChenZhanjie\Agentic\Stream\SseWriter;
+
+$sse = new SseWriter(fn(string $line) => $eventStream->write($line));
+$result = $agentic->runStream('general', $messages, $sse->asOnEvent());
+```
+
+纯 LLM 聊天流式：
+
+```php
+$sse = new SseWriter(fn(string $line) => echo $line, model: 'gpt-4o');
+$result = $agentic->chatStream($messages, $sse->asOnChunk());
+$sse->finish($result['usage'] ?? []);
+```
+
+**SSE 输出格式：**
+
+```
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
+
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"}}]}
+
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{...}}
+
+data: [DONE]
+```
+
+**结束原因：**
+
+| 场景 | `finish_reason` |
+|------|----------------|
+| 正常完成 | `"stop"` |
+| 预算超限 | `"length"` |
+| 护栏拦截 | `"content_filter"` |
+| 显式工具调用 | `"tool_calls"` |
 
 ### runWithConfig()
 

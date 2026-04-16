@@ -83,6 +83,10 @@ public function runStream(
 | `tool_call` | Tool call dispatched |
 | `tool_result` | Tool result received |
 | `complete` | Agent finished successfully |
+| `error` | Agent encountered an error |
+| `budget_exceeded` | Token budget exceeded |
+| `guardrail_blocked` | Output blocked by guardrail |
+| `suspended` | Agent suspended waiting for human input |
 
 **Example:**
 
