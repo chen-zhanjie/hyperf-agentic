@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic;
 
-use ChenZhanjie\Agentic\GuardrailResult;
-
 class AsyncGuardrailHandle
 {
     private ?GuardrailResult $result = null;

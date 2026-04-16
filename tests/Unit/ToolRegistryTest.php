@@ -112,12 +112,12 @@ class ToolRegistryTest extends TestCase
         $this->assertLessThanOrEqual(200, mb_strlen($result->toText()));
     }
 
-    public function testExecuteHandlesArrayReturn(): void
+    public function testExecuteHandlesJsonStringReturn(): void
     {
-        $tool = $this->createConfigurableTool('array_tool', 'Array', fn() => ['key' => 'value']);
+        $tool = $this->createConfigurableTool('json_tool', 'JSON', fn() => '{"key":"value"}');
         $this->registry->register($tool);
 
-        $result = $this->registry->execute('array_tool', []);
+        $result = $this->registry->execute('json_tool', []);
         $this->assertTrue($result->success);
         $this->assertJson($result->toText());
     }
@@ -194,7 +194,7 @@ class ToolRegistryTest extends TestCase
             public function name(): string { return $this->n; }
             public function description(): string { return $this->d; }
             public function parameters(): array { return ['type' => 'object', 'properties' => []]; }
-            public function execute(array $arguments): string|array { return ($this->fn)(); }
+            public function execute(array $arguments): string { return ($this->fn)(); }
             public function isEnabled(): bool { return $this->e; }
             public function isParallelAllowed(): bool { return true; }
         };

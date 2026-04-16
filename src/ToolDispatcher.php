@@ -158,7 +158,7 @@ class ToolDispatcher
                 $choices,
             );
 
-            $choiceValue = $approval['values']['choice'] ?? $approval['choice'] ?? 'deny';
+            $choiceValue = $approval['values']['choice'] ?? 'deny';
             $choice = ApprovalChoice::tryFrom($choiceValue) ?? ApprovalChoice::DENY;
 
             if ($choice === ApprovalChoice::DENY || !($approval['confirmed'] ?? false)) {

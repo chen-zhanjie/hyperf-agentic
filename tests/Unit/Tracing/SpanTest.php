@@ -78,14 +78,14 @@ class SpanTest extends TestCase
     public function testStatusIsPendingBeforeEnd(): void
     {
         $span = new Span(name: 'test');
-        $this->assertSame(SpanStatus::PENDING->value, $span->status());
+        $this->assertSame(SpanStatus::PENDING, $span->status());
     }
 
     public function testStatusIsOkAfterEnd(): void
     {
         $span = new Span(name: 'test');
         $span->end();
-        $this->assertSame(SpanStatus::OK->value, $span->status());
+        $this->assertSame(SpanStatus::OK, $span->status());
     }
 
     public function testAttributesFromConstructor(): void
@@ -133,6 +133,6 @@ class SpanTest extends TestCase
     {
         $span = new Span(name: 'test');
         $span->setStatus(SpanStatus::ERROR);
-        $this->assertSame(SpanStatus::ERROR->value, $span->status());
+        $this->assertSame(SpanStatus::ERROR, $span->status());
     }
 }

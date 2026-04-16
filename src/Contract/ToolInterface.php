@@ -15,7 +15,7 @@ interface ToolInterface
     public function parameters(): array;
 
     /** Execute the tool */
-    public function execute(array $arguments): string|array;
+    public function execute(array $arguments): string;
 
     /** Availability gate — return false to hide from LLM schema */
     public function isEnabled(): bool;

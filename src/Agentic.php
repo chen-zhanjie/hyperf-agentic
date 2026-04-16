@@ -34,7 +34,7 @@ class Agentic
     /**
      * Pure LLM chat (passthrough, no agent loop).
      */
-    public function chat(array $messages, array $options = []): string|array
+    public function chat(array $messages, array $options = []): array
     {
         $config = array_merge(
             $this->defaults,
@@ -43,10 +43,6 @@ class Agentic
         );
 
         $result = $this->runner->run($messages, $config, $options);
-
-        if (is_string($result->content)) {
-            return $result->content;
-        }
 
         return $result->toArray();
     }
@@ -139,14 +135,6 @@ class Agentic
     }
 
     /**
-     * List all registered tool names.
-     */
-    public function tools(): array
-    {
-        return $this->toolRegistry->getAvailableNames();
-    }
-
-    /**
      * List available (enabled) tool names.
      */
     public function availableTools(): array
@@ -211,22 +199,6 @@ class Agentic
     public function revokeAll(?string $sessionId = null): void
     {
         $this->approvalStore?->revokeAll($sessionId);
-    }
-
-    /**
-     * @deprecated Use approveTool($toolOrPattern, $sessionId) instead.
-     */
-    public function approveToolForSession(string $toolOrPattern, string $sessionId): void
-    {
-        $this->approveTool($toolOrPattern, $sessionId);
-    }
-
-    /**
-     * @deprecated Use approveAll($sessionId) instead.
-     */
-    public function approveAllForSession(string $sessionId): void
-    {
-        $this->approveAll($sessionId);
     }
 
     /**

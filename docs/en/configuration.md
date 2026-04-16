@@ -31,7 +31,7 @@ return [
     'default' => 'openai',
     'providers' => [
         'openai' => [
-            'driver' => 'openai',
+            'protocol' => 'openai',
             'api_key' => env('OPENAI_API_KEY'),
             'base_url' => 'https://api.openai.com/v1',
             'model' => 'gpt-4o',
@@ -39,7 +39,7 @@ return [
             'temperature' => 0.7,
         ],
         'deepseek' => [
-            'driver' => 'openai',       // OpenAI-compatible protocol
+            'protocol' => 'openai',     // OpenAI-compatible protocol
             'api_key' => env('DEEPSEEK_API_KEY'),
             'base_url' => 'https://api.deepseek.com/v1',
             'model' => 'deepseek-chat',
@@ -53,12 +53,14 @@ return [
 |-----|------|----------|-------------|
 | `default` | string | yes | Default provider name |
 | `providers` | array | yes | Provider config map |
-| `providers.{name}.driver` | string | yes | Driver type: `openai` |
+| `providers.{name}.protocol` | string | no | API protocol: `openai` (default) or `anthropic` |
 | `providers.{name}.api_key` | string | yes | API key |
 | `providers.{name}.base_url` | string | yes | API base URL |
 | `providers.{name}.model` | string | yes | Model name |
 | `providers.{name}.max_tokens` | int | no | Max tokens per request |
 | `providers.{name}.temperature` | float | no | Generation temperature (0.0 - 2.0) |
+
+> **Protocol support:** The SDK ships built-in adapters for both OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) API protocols. Set `protocol` to `'openai'` (default) or `'anthropic'` to select the adapter. All message conversion (system prompts, tool calls, tool results) is handled automatically.
 
 ## agents.php — Agent Definitions
 

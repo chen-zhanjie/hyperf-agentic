@@ -15,7 +15,7 @@ class BudgetRunnerTest extends TestCase
     {
         $llm = $this->createInfiniteToolCallLlm('search', '{"q":"test"}');
 
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -31,7 +31,7 @@ class BudgetRunnerTest extends TestCase
 
     public function testGraceTurnAllowsCleanFinish(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -70,7 +70,7 @@ class BudgetRunnerTest extends TestCase
 
     public function testGraceTurnInjectsBudgetWarning(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -118,7 +118,7 @@ class BudgetRunnerTest extends TestCase
 
     public function testCostBudgetStopsWhenExceeded(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -136,7 +136,7 @@ class BudgetRunnerTest extends TestCase
 
     public function testCostBudgetWarningEmittedWhenNearLimit(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 

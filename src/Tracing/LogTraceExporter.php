@@ -26,7 +26,7 @@ class LogTraceExporter implements TraceExporterInterface
         $this->logger->info("[Trace] {$span->name()}", [
             'span_id' => $span->spanId(),
             'parent' => $span->parentSpanId(),
-            'status' => $span->status(),
+            'status' => $span->status()->value,
             'elapsed' => $elapsed,
             'attrs' => $span->attributes(),
         ]);

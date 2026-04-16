@@ -265,7 +265,7 @@ class AgentRunner
 
         // Emit started event
         $this->emitEvent($onEvent, AgentEventType::STARTED, [
-            'agent' => $persona->name,
+            'agent' => $setup['persona']->name,
         ]);
 
         // Build the full message array with system prompt
@@ -376,17 +376,16 @@ class AgentRunner
         ]);
 
         $response = $this->llmClient->chat($fullMessages, $llmOptions);
-        $responseArray = $this->normalizeResponse($response);
-        $content = $responseArray['content'];
-        $toolCalls = $responseArray['tool_calls'] ?? [];
-        $usage = $responseArray['usage'] ?? [];
+        $content = $response['content'];
+        $toolCalls = $response['tool_calls'] ?? [];
+        $usage = $response['usage'] ?? [];
 
         $loop->recordUsage(
             (int) ($usage['prompt_tokens'] ?? 0),
             (int) ($usage['completion_tokens'] ?? 0),
         );
 
-        $this->middleware->afterLlmCall($responseArray, $usage);
+        $this->middleware->afterLlmCall($response, $usage);
 
         // No tool calls → text response → clean finish via grace
         if (empty($toolCalls)) {
@@ -492,12 +491,9 @@ class AgentRunner
 
         // Call LLM
         $response = $this->llmClient->chat($fullMessages, $llmOptions);
-
-        // Parse response
-        $responseArray = $this->normalizeResponse($response);
-        $content = $responseArray['content'];
-        $toolCalls = $responseArray['tool_calls'] ?? [];
-        $usage = $responseArray['usage'] ?? [];
+        $content = $response['content'];
+        $toolCalls = $response['tool_calls'] ?? [];
+        $usage = $response['usage'] ?? [];
 
         // Track token usage
         $loop->recordUsage(
@@ -506,7 +502,7 @@ class AgentRunner
         );
 
         // Middleware — after LLM call
-        $this->middleware->afterLlmCall($responseArray, $usage);
+        $this->middleware->afterLlmCall($response, $usage);
 
         // No tool calls → text response → done
         if (empty($toolCalls)) {
@@ -706,26 +702,6 @@ class AgentRunner
             name: 'Assistant',
             content: 'You are a helpful AI assistant.',
         );
-    }
-
-    /**
-     * Normalize LLM response to array format.
-     */
-    private function normalizeResponse(string|array $response): array
-    {
-        if (is_string($response)) {
-            return [
-                'content' => $response,
-                'tool_calls' => [],
-                'usage' => [],
-            ];
-        }
-
-        return array_merge([
-            'content' => '',
-            'tool_calls' => [],
-            'usage' => [],
-        ], $response);
     }
 
     /**

@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-04-16
+
+### Added
+
+- **Anthropic API protocol support** — Built-in `AnthropicAdapter` for native Anthropic Messages API (`/v1/messages`). Automatic message conversion (system prompts, tool_use blocks, tool_result blocks, thinking blocks)
+- **OpenAiAdapter** — Extracted built-in OpenAI-compatible HTTP adapter (`/v1/chat/completions`)
+- **LlmAdapter directory** — New `src/LlmAdapter/` namespace for protocol adapters
+- **Dual-protocol routing** — `LlmClient` routes by `protocol` config key (`'openai'` or `'anthropic'`), auto-selects the correct adapter
+- **Integration test framework** — Real LLM integration tests with `@group integration`, `.env.test` configuration, bootstrap file
+- **Anthropic integration tests** — 6 tests: chat, usage, system prompt, tool calling, agent with tool, both-protocols-same-shape verification
+
+### Changed
+
+- `ToolInterface::execute()` return type changed from `string|array` to `string`
+- `LlmClient::chat()` return type changed from `string|array` to `array`
+- `Agentic::chat()` return type changed from `string|array` to `array`
+- `SpanInterface::status()` return type changed from `string` to `SpanStatus` enum
+- `SpanInterface` now requires `events()` method
+- Callable properties (`LlmClient`, `GuardrailAuditLogger`, `AuditMiddleware`) normalized to `Closure` with constructor conversion
+- `ToolDispatcher` approval response normalized to single format (`$approval['values']['choice']`)
+- `Span::status()` returns `SpanStatus` enum directly instead of `string`
+
+### Fixed
+
+- **Undefined variable bug** — `$persona` in `AgentRunner::run()` was not defined; fixed to use `$setup['persona']->name`
+
+### Removed
+
+- **AgentConfigManager** — Dead code, registered in DI but never injected or used
+- `AgentRunner::normalizeResponse()` — No longer needed after `doChat()` always returns `array`
+- `Agentic::tools()` — Duplicate of `availableTools()`
+- `Agentic::approveToolForSession()` / `approveAllForSession()` — Deprecated BC shims
+- Redundant same-namespace imports in `AsyncGuardrailHandle.php` and `TraceExporterInterface.php`
+
 ## [0.5.0] - 2026-04-16
 
 ### Added

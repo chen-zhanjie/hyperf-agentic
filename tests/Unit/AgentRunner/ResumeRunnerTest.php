@@ -13,7 +13,7 @@ class ResumeRunnerTest extends TestCase
 
     public function testResumeContinuesFromSuspendedState(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -49,7 +49,7 @@ class ResumeRunnerTest extends TestCase
 
     public function testResumeWithToolCallsContinuesLoop(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'more data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"more data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -92,7 +92,7 @@ class ResumeRunnerTest extends TestCase
     public function testResumeRespectsRemainingIterations(): void
     {
         $llm = $this->createInfiniteToolCallLlm('search', '{"q":"test"}');
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 

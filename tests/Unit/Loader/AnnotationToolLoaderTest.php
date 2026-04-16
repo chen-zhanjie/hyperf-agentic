@@ -62,7 +62,7 @@ class AnnotationToolLoaderTest extends TestCase
             public function name(): string { return 'anon_tool'; }
             public function description(): string { return 'test'; }
             public function parameters(): array { return []; }
-            public function execute(array $arguments): array|string { return 'ok'; }
+            public function execute(array $arguments): string { return 'ok'; }
             public function isEnabled(): bool { return true; }
             public function isParallelAllowed(): bool { return true; }
         };

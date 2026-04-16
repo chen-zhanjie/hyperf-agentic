@@ -55,11 +55,11 @@ class LlmClientTest extends TestCase
     {
         $client = $this->makeClient(
             providers: ['openai' => ['model' => 'gpt-4o']],
-            adapter: fn(string $op, string $provider, array $config, array $messages, array $options) => 'Hello!',
+            adapter: fn(string $op, string $provider, array $config, array $messages, array $options) => ['content' => 'Hello!', 'usage' => []],
         );
 
         $result = $client->chat([['role' => 'user', 'content' => 'hi']]);
-        $this->assertSame('Hello!', $result);
+        $this->assertSame(['content' => 'Hello!', 'usage' => []], $result);
     }
 
     public function testChatPassesCorrectProvider(): void
@@ -72,7 +72,7 @@ class LlmClientTest extends TestCase
             ],
             adapter: function (string $op, string $provider, ...$args) use (&$capturedProvider) {
                 $capturedProvider = $provider;
-                return 'ok';
+                return ['content' => 'ok', 'usage' => []];
             },
         );
 
@@ -85,7 +85,8 @@ class LlmClientTest extends TestCase
         $client = $this->makeClient(providers: ['openai' => ['model' => 'gpt-4o']]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('adapter not configured');
+        $this->expectExceptionMessage('base_url');
+        $this->expectExceptionMessage('api_key');
         $client->chat([['role' => 'user', 'content' => 'hi']]);
     }
 
@@ -98,12 +99,12 @@ class LlmClientTest extends TestCase
             retry: ['max_attempts' => 1, 'base_delay_ms' => 1, 'max_delay_ms' => 1],
             adapter: function (string $op, string $provider, ...$args) use (&$calledProvider) {
                 $calledProvider = $provider;
-                return 'failover response';
+                return ['content' => 'failover response', 'usage' => []];
             },
         );
 
         $result = $client->chat([['role' => 'user', 'content' => 'hi']], ['provider' => 'unknown']);
-        $this->assertSame('failover response', $result);
+        $this->assertSame(['content' => 'failover response', 'usage' => []], $result);
         // Should have failover'd to 'openai'
         $this->assertSame('openai', $calledProvider);
     }
@@ -121,12 +122,12 @@ class LlmClientTest extends TestCase
                 if ($attempts < 3) {
                     throw new \RuntimeException('temporary failure');
                 }
-                return 'success on attempt 3';
+                return ['content' => 'success on attempt 3', 'usage' => []];
             },
         );
 
         $result = $client->chat([['role' => 'user', 'content' => 'hi']]);
-        $this->assertSame('success on attempt 3', $result);
+        $this->assertSame(['content' => 'success on attempt 3', 'usage' => []], $result);
         $this->assertSame(3, $attempts);
     }
 
@@ -159,12 +160,12 @@ class LlmClientTest extends TestCase
                 if ($provider === 'primary') {
                     throw new \RuntimeException('primary down');
                 }
-                return 'fallback response';
+                return ['content' => 'fallback response', 'usage' => []];
             },
         );
 
         $result = $client->chat([['role' => 'user', 'content' => 'hi']]);
-        $this->assertSame('fallback response', $result);
+        $this->assertSame(['content' => 'fallback response', 'usage' => []], $result);
         $this->assertContains('primary', $calledProviders);
         $this->assertContains('fallback', $calledProviders);
     }
@@ -178,7 +179,7 @@ class LlmClientTest extends TestCase
             providers: ['openai' => ['model' => 'gpt-4o-mini']],
             adapter: function (string $op, string $p, array $c, array $m, array $options) use (&$capturedOptions) {
                 $capturedOptions = $options;
-                return 'ok';
+                return ['content' => 'ok', 'usage' => []];
             },
         );
 
@@ -193,7 +194,7 @@ class LlmClientTest extends TestCase
             providers: ['openai' => ['model' => 'gpt-4o']],
             adapter: function (string $op, string $p, array $c, array $m, array $options) use (&$capturedOptions) {
                 $capturedOptions = $options;
-                return 'ok';
+                return ['content' => 'ok', 'usage' => []];
             },
         );
 

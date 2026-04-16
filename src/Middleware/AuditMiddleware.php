@@ -14,12 +14,11 @@ class AuditMiddleware implements MiddlewareInterface
     private string $currentSessionId = '';
     private string $currentAgentName = '';
 
-    /** @var callable|null External audit logger */
-    private $auditLogger;
+    private readonly ?\Closure $auditLogger;
 
     public function __construct(?callable $auditLogger = null)
     {
-        $this->auditLogger = $auditLogger;
+        $this->auditLogger = $auditLogger !== null ? \Closure::fromCallable($auditLogger) : null;
     }
 
     public function beforeLoop(array $messages, array $agentConfig): array

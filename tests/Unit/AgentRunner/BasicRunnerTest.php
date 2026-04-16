@@ -40,9 +40,9 @@ class BasicRunnerTest extends TestCase
         $this->assertSame(1, $result->iterations);
     }
 
-    public function testRunHandlesStringLlmResponse(): void
+    public function testRunHandlesMinimalArrayResponse(): void
     {
-        $llm = $this->createMockLlm(["Just a string response"]);
+        $llm = $this->createMockLlm([['content' => 'Just a string response', 'usage' => $this->usage(10, 5)]]);
 
         $runner = $this->createRunner($llm);
         $result = $runner->run(
@@ -56,7 +56,7 @@ class BasicRunnerTest extends TestCase
 
     public function testRunWithSingleToolCall(): void
     {
-        $tool = $this->createMockTool('search', 'Search tool', ['result' => 'found it']);
+        $tool = $this->createMockTool('search', 'Search tool', '{"result":"found it"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -91,8 +91,8 @@ class BasicRunnerTest extends TestCase
 
     public function testRunWithMultipleToolCalls(): void
     {
-        $tool1 = $this->createMockTool('search_a', 'Tool A', ['a' => 1]);
-        $tool2 = $this->createMockTool('search_b', 'Tool B', ['b' => 2]);
+        $tool1 = $this->createMockTool('search_a', 'Tool A', '{"a":1}');
+        $tool2 = $this->createMockTool('search_b', 'Tool B', '{"b":2}');
         $registry = new ToolRegistry();
         $registry->register($tool1);
         $registry->register($tool2);
@@ -131,7 +131,7 @@ class BasicRunnerTest extends TestCase
 
     public function testMiddlewareInterceptsToolCall(): void
     {
-        $tool = $this->createMockTool('dangerous', 'Dangerous tool', ['should not be called']);
+        $tool = $this->createMockTool('dangerous', 'Dangerous tool', 'should not be called');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -202,7 +202,7 @@ class BasicRunnerTest extends TestCase
 
     public function testEmitsToolEventsOnToolCall(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['found' => true]);
+        $tool = $this->createMockTool('search', 'Search', '{"found":true}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 

@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-04-16
+
+### 新增
+
+- **Anthropic API 协议支持** — 内置 `AnthropicAdapter`，原生支持 Anthropic Messages API（`/v1/messages`）。自动消息格式转换（系统提示、tool_use 块、tool_result 块、thinking 块）
+- **OpenAiAdapter** — 提取内置 OpenAI 兼容 HTTP 适配器（`/v1/chat/completions`）
+- **LlmAdapter 目录** — 新增 `src/LlmAdapter/` 命名空间用于协议适配器
+- **双协议路由** — `LlmClient` 通过 `protocol` 配置键路由（`'openai'` 或 `'anthropic'`），自动选择正确的适配器
+- **集成测试框架** — 真实 LLM 集成测试，使用 `@group integration`、`.env.test` 配置、bootstrap 文件
+- **Anthropic 集成测试** — 6 个测试：聊天、用量、系统提示、工具调用、Agent 工具调用、双协议一致性验证
+
+### 变更
+
+- `ToolInterface::execute()` 返回类型从 `string|array` 改为 `string`
+- `LlmClient::chat()` 返回类型从 `string|array` 改为 `array`
+- `Agentic::chat()` 返回类型从 `string|array` 改为 `array`
+- `SpanInterface::status()` 返回类型从 `string` 改为 `SpanStatus` 枚举
+- `SpanInterface` 新增 `events()` 方法要求
+- 可调用属性（`LlmClient`、`GuardrailAuditLogger`、`AuditMiddleware`）统一为 `Closure` 类型
+- `ToolDispatcher` 审批响应统一为单一格式（`$approval['values']['choice']`）
+- `Span::status()` 直接返回 `SpanStatus` 枚举而非 `string`
+
+### 修复
+
+- **未定义变量 Bug** — `AgentRunner::run()` 中的 `$persona` 未定义；已修复为使用 `$setup['persona']->name`
+
+### 移除
+
+- **AgentConfigManager** — 死代码，注册在 DI 中但从未被注入或使用
+- `AgentRunner::normalizeResponse()` — `doChat()` 始终返回 `array` 后不再需要
+- `Agentic::tools()` — 与 `availableTools()` 重复
+- `Agentic::approveToolForSession()` / `approveAllForSession()` — 已弃用的 BC 兼容方法
+- `AsyncGuardrailHandle.php` 和 `TraceExporterInterface.php` 中的冗余同命名空间 import
+
 ## [0.5.0] - 2026-04-16
 
 ### 新增

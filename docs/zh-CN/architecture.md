@@ -14,11 +14,11 @@ Layer 1: Contract（接口层）
 Layer 2: Subsystems（子系统）
     │   ToolRegistry, GuardrailRunner, ToolGuardrailRunner,
     │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline,
-    │   ToolDispatcher
+    │   ToolDispatcher, LlmAdapter (OpenAiAdapter, AnthropicAdapter)
     │
 Layer 3: Agent Core（Agent 核心）
     │   AgentRunner, ToolDispatcher, LoopState,
-    │   AgentRunContext, AgentResult, AgentConfigManager
+    │   AgentRunContext, AgentResult
     │
 Layer 4: Facade（门面）
     │   Agentic — 统一入口
@@ -218,6 +218,9 @@ src/
 │   ├── DefaultPrompts.php
 │   └── TokenEstimator.php
 ├── Attributes/        # PHP 8 Attribute（#[AsTool] 等）
+├── LlmAdapter/        # LLM 协议适配器
+│   ├── OpenAiAdapter.php    # OpenAI /v1/chat/completions
+│   └── AnthropicAdapter.php # Anthropic /v1/messages
 ├── AgentRunner.php    # Layer 3: Agent 核心
 ├── ToolDispatcher.php # Layer 3: 工具分发链（护栏 → 权限 → 执行）
 ├── LoopState.php      # 每次请求的可变循环累加器

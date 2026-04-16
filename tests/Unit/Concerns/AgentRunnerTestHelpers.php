@@ -47,7 +47,7 @@ trait AgentRunnerTestHelpers
         return new LlmClient(
             providerConfigs: ['test' => ['model' => 'test-model']],
             defaultProvider: 'test',
-            adapterFactory: function (string $type, string $provider, array $config, array $messages, array $options) use ($responses, &$index): string|array {
+            adapterFactory: function (string $type, string $provider, array $config, array $messages, array $options) use ($responses, &$index): array {
                 $response = $responses[$index] ?? ['content' => 'no more responses'];
                 $index++;
                 return $response;
@@ -84,18 +84,18 @@ trait AgentRunnerTestHelpers
         );
     }
 
-    protected function createMockTool(string $name, string $description, string|array $returnValue): ToolInterface
+    protected function createMockTool(string $name, string $description, string $returnValue = 'ok'): ToolInterface
     {
         return new class($name, $description, $returnValue) implements ToolInterface {
             public function __construct(
                 private readonly string $toolName,
                 private readonly string $toolDesc,
-                private readonly string|array $returnValue,
+                private readonly string $returnValue,
             ) {}
             public function name(): string { return $this->toolName; }
             public function description(): string { return $this->toolDesc; }
             public function parameters(): array { return ['type' => 'object', 'properties' => []]; }
-            public function execute(array $arguments): string|array { return $this->returnValue; }
+            public function execute(array $arguments): string { return $this->returnValue; }
             public function isEnabled(): bool { return true; }
             public function isParallelAllowed(): bool { return true; }
         };

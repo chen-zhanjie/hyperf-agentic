@@ -91,9 +91,9 @@ class AgenticTest extends TestCase
 
     // ── chat (pure LLM passthrough) ──
 
-    public function testChatReturnsStringResponse(): void
+    public function testChatReturnsArrayResponse(): void
     {
-        $llm = $this->createMockLlm(['plain text response']);
+        $llm = $this->createMockLlm([['content' => 'plain text response', 'usage' => []]]);
         $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
@@ -103,7 +103,8 @@ class AgenticTest extends TestCase
         );
 
         $result = $agentic->chat([['role' => 'user', 'content' => 'hi']]);
-        $this->assertSame('plain text response', $result);
+        $this->assertIsArray($result);
+        $this->assertSame('plain text response', $result['content']);
     }
 
     // ── agents list ──
@@ -128,7 +129,7 @@ class AgenticTest extends TestCase
 
     // ── tools ──
 
-    public function testToolsReturnsRegisteredToolNames(): void
+    public function testAvailableToolsReturnsRegisteredToolNames(): void
     {
         $registry = new ToolRegistry();
         $registry->register($this->createMockTool('search'));
@@ -136,7 +137,7 @@ class AgenticTest extends TestCase
 
         $agentic = $this->createDefaultAgentic(toolRegistry: $registry);
 
-        $tools = $agentic->tools();
+        $tools = $agentic->availableTools();
         $this->assertContains('search', $tools);
         $this->assertContains('create', $tools);
     }
@@ -394,7 +395,7 @@ class AgenticTest extends TestCase
         return new LlmClient(
             providerConfigs: ['test' => ['model' => 'test']],
             defaultProvider: 'test',
-            adapterFactory: function () use ($responses, &$index): string|array {
+            adapterFactory: function () use ($responses, &$index): array {
                 return $responses[$index++] ?? ['content' => '', 'usage' => []];
             },
         );

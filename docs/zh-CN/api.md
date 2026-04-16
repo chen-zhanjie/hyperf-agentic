@@ -154,10 +154,10 @@ public function runStreamWithConfig(
 纯 LLM 对话，不经过 Agent 循环（不调用工具）。
 
 ```php
-public function chat(array $messages, array $options = []): string|array
+public function chat(array $messages, array $options = []): array
 ```
 
-**返回：** 字符串（纯文本响应）或数组（结构化响应）
+**返回：** 包含 `content`、`usage` 等键的关联数组
 
 ### chatStream()
 
@@ -196,14 +196,6 @@ public function resume(string $sessionId): AgentResult
 
 ```php
 public function agents(): array
-```
-
-### tools()
-
-获取所有已注册的工具名称。
-
-```php
-public function tools(): array
 ```
 
 ### availableTools()
@@ -285,10 +277,6 @@ public function revokeTool(string $toolOrPattern, ?string $sessionId = null): vo
 ```php
 public function revokeAll(?string $sessionId = null): void
 ```
-
-### 已弃用方法
-
-> `approveToolForSession()` 和 `approveAllForSession()` 已弃用。请使用 `approveTool($tool, $sessionId)` 和 `approveAll($sessionId)` 替代。
 
 ## AgentResult
 

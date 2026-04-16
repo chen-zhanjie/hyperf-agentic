@@ -3,11 +3,22 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic;
 
+use ChenZhanjie\Agentic\LlmAdapter\AnthropicAdapter;
+use ChenZhanjie\Agentic\LlmAdapter\OpenAiAdapter;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
 /**
  * Multi-provider LLM client with load balancing and retry.
+ *
+ * Supports two built-in protocols:
+ * - 'openai': OpenAI-compatible /v1/chat/completions
+ * - 'anthropic': Anthropic /v1/messages
+ *
+ * Each provider config declares its protocol via the 'protocol' key.
+ * If omitted, defaults to 'openai' for backward compatibility.
+ *
+ * Custom adapters can still be injected via the $adapterFactory parameter.
  */
 class LlmClient
 {
@@ -20,8 +31,7 @@ class LlmClient
     private readonly string $defaultProvider;
     private readonly LoggerInterface $logger;
 
-    /** @var callable|null Adapter factory */
-    private $adapterFactory = null;
+    private readonly ?\Closure $adapterFactory;
 
     public function __construct(
         array $providerConfigs = [],
@@ -38,10 +48,10 @@ class LlmClient
             'max_delay_ms' => 30000,
         ], $retryConfig);
         $this->logger = $logger ?? new NullLogger();
-        $this->adapterFactory = $adapterFactory;
+        $this->adapterFactory = $adapterFactory !== null ? \Closure::fromCallable($adapterFactory) : null;
     }
 
-    public function chat(array $messages, array $options = []): string|array
+    public function chat(array $messages, array $options = []): array
     {
         $provider = $options['provider'] ?? $this->defaultProvider;
         $providers = $this->getFailoverChain($provider);
@@ -88,7 +98,7 @@ class LlmClient
 
     // --- Internal ---
 
-    protected function doChat(string $provider, array $messages, array $options): string|array
+    protected function doChat(string $provider, array $messages, array $options): array
     {
         $config = $this->getProviderConfig($provider);
         $options['model'] = $options['model'] ?? $config['model'] ?? 'gpt-4o';
@@ -97,9 +107,7 @@ class LlmClient
             return ($this->adapterFactory)('chat', $provider, $config, $messages, $options);
         }
 
-        throw new \RuntimeException(
-            "LLM adapter not configured. Set adapterFactory or use Hyperf integration."
-        );
+        return $this->callBuiltInAdapter($provider, $config, $messages, $options);
     }
 
     protected function doChatStream(string $provider, array $messages, array $options, callable $onChunk): void
@@ -112,9 +120,32 @@ class LlmClient
             return;
         }
 
+        // Built-in streaming not yet implemented for adapters
         throw new \RuntimeException(
-            "LLM adapter not configured. Set adapterFactory or use Hyperf integration."
+            "Streaming requires an adapterFactory. Built-in adapter streaming is not yet available."
         );
+    }
+
+    /**
+     * Dispatch to the correct built-in adapter based on provider protocol.
+     */
+    private function callBuiltInAdapter(string $provider, array $config, array $messages, array $options): array
+    {
+        $protocol = $config['protocol'] ?? 'openai';
+        $baseUrl = $config['base_url'] ?? $config['url'] ?? '';
+        $apiKey = $config['api_key'] ?? '';
+
+        if ($baseUrl === '' || $apiKey === '') {
+            throw new \RuntimeException(
+                "Built-in adapter requires 'base_url' and 'api_key' in provider config for [{$provider}]. "
+                . "Alternatively, provide an adapterFactory callable."
+            );
+        }
+
+        return match ($protocol) {
+            'anthropic' => (new AnthropicAdapter($apiKey, $baseUrl))->chat($messages, $options),
+            default => (new OpenAiAdapter($apiKey, $baseUrl))->chat($messages, $options),
+        };
     }
 
     private function getProviderConfig(string $provider): array

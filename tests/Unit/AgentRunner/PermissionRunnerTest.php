@@ -24,7 +24,7 @@ class PermissionRunnerTest extends TestCase
 
     public function testAutoApprovedToolEmitsEvent(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -67,7 +67,7 @@ class PermissionRunnerTest extends TestCase
 
     public function testAskChoiceOnceExecutesToolWithoutRecording(): void
     {
-        $tool = $this->createMockTool('delete_db', 'Delete DB', ['deleted' => true]);
+        $tool = $this->createMockTool('delete_db', 'Delete DB', '{"deleted":true}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -109,7 +109,7 @@ class PermissionRunnerTest extends TestCase
 
     public function testAskChoiceToolRecordsApprovalForSession(): void
     {
-        $tool = $this->createMockTool('delete_db', 'Delete DB', ['deleted' => true]);
+        $tool = $this->createMockTool('delete_db', 'Delete DB', '{"deleted":true}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -151,7 +151,7 @@ class PermissionRunnerTest extends TestCase
 
     public function testAskChoiceSessionRecordsApproveAllForSession(): void
     {
-        $tool = $this->createMockTool('delete_db', 'Delete DB', ['deleted' => true]);
+        $tool = $this->createMockTool('delete_db', 'Delete DB', '{"deleted":true}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -193,7 +193,7 @@ class PermissionRunnerTest extends TestCase
 
     public function testAskChoiceDenyReturnsDenialMessage(): void
     {
-        $tool = $this->createMockTool('delete_db', 'Delete DB', ['deleted' => true]);
+        $tool = $this->createMockTool('delete_db', 'Delete DB', '{"deleted":true}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -232,7 +232,7 @@ class PermissionRunnerTest extends TestCase
 
     public function testAskWithoutBlockingResolverAutoDenies(): void
     {
-        $tool = $this->createMockTool('delete_db', 'Delete DB', ['deleted' => true]);
+        $tool = $this->createMockTool('delete_db', 'Delete DB', '{"deleted":true}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -267,7 +267,7 @@ class PermissionRunnerTest extends TestCase
 
     public function testAutoApproveConfigPrePopulatesStore(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -310,7 +310,7 @@ class PermissionRunnerTest extends TestCase
 
     public function testAutoApproveTrueApprovesAllForSession(): void
     {
-        $tool = $this->createMockTool('delete_all', 'Delete All', ['deleted' => true]);
+        $tool = $this->createMockTool('delete_all', 'Delete All', '{"deleted":true}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -350,7 +350,7 @@ class PermissionRunnerTest extends TestCase
 
     public function testPermissionModeAutoBypassesAllAsks(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 
@@ -382,7 +382,7 @@ class PermissionRunnerTest extends TestCase
 
     public function testPerRequestStoreCloneIsolation(): void
     {
-        $tool = $this->createMockTool('search', 'Search', ['result' => 'data']);
+        $tool = $this->createMockTool('search', 'Search', '{"result":"data"}');
         $registry = new ToolRegistry();
         $registry->register($tool);
 

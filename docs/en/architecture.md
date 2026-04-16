@@ -14,11 +14,11 @@ Layer 1: Contract (Interface Layer)
 Layer 2: Subsystems
     │   ToolRegistry, GuardrailRunner, ToolGuardrailRunner,
     │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline,
-    │   ToolDispatcher
+    │   ToolDispatcher, LlmAdapter (OpenAiAdapter, AnthropicAdapter)
     │
 Layer 3: Agent Core
     │   AgentRunner, ToolDispatcher, LoopState,
-    │   AgentRunContext, AgentResult, AgentConfigManager
+    │   AgentRunContext, AgentResult
     │
 Layer 4: Facade
     │   Agentic — unified entry point
@@ -218,6 +218,9 @@ src/
 │   ├── DefaultPrompts.php
 │   └── TokenEstimator.php
 ├── Attributes/        # PHP 8 Attributes (#[AsTool], etc.)
+├── LlmAdapter/        # LLM protocol adapters
+│   ├── OpenAiAdapter.php    # OpenAI /v1/chat/completions
+│   └── AnthropicAdapter.php # Anthropic /v1/messages
 ├── AgentRunner.php    # Layer 3: Agent core
 ├── ToolDispatcher.php # Layer 3: Tool dispatch chain (guardrails → permissions → execution)
 ├── LoopState.php      # Per-request mutable loop accumulator

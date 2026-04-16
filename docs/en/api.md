@@ -154,10 +154,10 @@ public function runStreamWithConfig(
 Pure LLM chat without the agent loop (no tool calls).
 
 ```php
-public function chat(array $messages, array $options = []): string|array
+public function chat(array $messages, array $options = []): array
 ```
 
-**Returns:** String (plain text response) or array (structured response)
+**Returns:** Array with `content`, `usage`, and optional `tool_calls` keys.
 
 ### chatStream()
 
@@ -196,14 +196,6 @@ Get all defined agent names.
 
 ```php
 public function agents(): array
-```
-
-### tools()
-
-Get all registered tool names.
-
-```php
-public function tools(): array
 ```
 
 ### availableTools()
@@ -285,10 +277,6 @@ Revoke all approvals globally or for a session.
 ```php
 public function revokeAll(?string $sessionId = null): void
 ```
-
-### Deprecated Methods
-
-> `approveToolForSession()` and `approveAllForSession()` are deprecated. Use `approveTool($tool, $sessionId)` and `approveAll($sessionId)` instead.
 
 ## AgentResult
 

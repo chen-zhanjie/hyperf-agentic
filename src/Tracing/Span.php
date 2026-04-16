@@ -66,9 +66,9 @@ class Span implements SpanInterface
         return $this->attributes;
     }
 
-    public function status(): string
+    public function status(): SpanStatus
     {
-        return $this->status->value;
+        return $this->status;
     }
 
     public function end(?int $timestamp = null): void

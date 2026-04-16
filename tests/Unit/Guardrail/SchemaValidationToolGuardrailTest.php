@@ -185,7 +185,7 @@ class SchemaValidationToolGuardrailTest extends TestCase
             public function name(): string { return $this->name; }
             public function description(): string { return "Tool {$this->name}"; }
             public function parameters(): array { return $this->schema; }
-            public function execute(array $arguments): string|array { return 'ok'; }
+            public function execute(array $arguments): string { return 'ok'; }
             public function isEnabled(): bool { return true; }
             public function isParallelAllowed(): bool { return true; }
         };

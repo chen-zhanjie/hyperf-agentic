@@ -50,7 +50,6 @@ class ConfigProvider
             ToolRegistry::class => ToolRegistryFactory::class,
 
             // Layer 3: Agent Core
-            AgentConfigManager::class => AgentConfigManager::class,
             PromptBuilder::class => PromptBuilder::class,
             LlmClient::class => LlmClient::class,
             GuardrailRunner::class => GuardrailRunner::class,

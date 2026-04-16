@@ -31,7 +31,7 @@ return [
     'default' => 'openai',
     'providers' => [
         'openai' => [
-            'driver' => 'openai',
+            'protocol' => 'openai',
             'api_key' => env('OPENAI_API_KEY'),
             'base_url' => 'https://api.openai.com/v1',
             'model' => 'gpt-4o',
@@ -39,7 +39,7 @@ return [
             'temperature' => 0.7,
         ],
         'deepseek' => [
-            'driver' => 'openai',       // 兼容 OpenAI 协议
+            'protocol' => 'openai',     // 兼容 OpenAI 协议
             'api_key' => env('DEEPSEEK_API_KEY'),
             'base_url' => 'https://api.deepseek.com/v1',
             'model' => 'deepseek-chat',
@@ -53,12 +53,14 @@ return [
 |----|------|------|------|
 | `default` | string | 是 | 默认提供商名称 |
 | `providers` | array | 是 | 提供商配置映射 |
-| `providers.{name}.driver` | string | 是 | 驱动类型：`openai` |
+| `providers.{name}.protocol` | string | 否 | API 协议：`openai`（默认）或 `anthropic` |
 | `providers.{name}.api_key` | string | 是 | API 密钥 |
 | `providers.{name}.base_url` | string | 是 | API 基础 URL |
 | `providers.{name}.model` | string | 是 | 模型名称 |
 | `providers.{name}.max_tokens` | int | 否 | 单次请求最大 token 数 |
 | `providers.{name}.temperature` | float | 否 | 生成温度 (0.0 - 2.0) |
+
+> **协议支持：** SDK 内置 OpenAI（`/v1/chat/completions`）和 Anthropic（`/v1/messages`）两种 API 协议适配器。通过 `protocol` 配置键选择 `'openai'`（默认）或 `'anthropic'`。消息格式转换（系统提示、工具调用、工具结果）自动完成。
 
 ## agents.php — Agent 定义
 

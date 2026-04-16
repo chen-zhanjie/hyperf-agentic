@@ -11,14 +11,13 @@ use Psr\Log\LoggerInterface;
  */
 class GuardrailAuditLogger implements GuardrailAuditLoggerInterface
 {
-    /** @var callable|null */
-    private $handler;
+    private readonly ?\Closure $handler;
 
     public function __construct(
         private readonly ?LoggerInterface $logger = null,
         ?callable $handler = null,
     ) {
-        $this->handler = $handler;
+        $this->handler = $handler !== null ? \Closure::fromCallable($handler) : null;
     }
 
     public function log(GuardrailAuditEntry $entry): void
