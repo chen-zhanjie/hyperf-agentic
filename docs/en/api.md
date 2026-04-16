@@ -72,11 +72,25 @@ public function runStream(
 | `$onEvent` | callable\|null | SSE event callback `fn(string $event, array $data) => void` |
 | `$options` | array | Runtime options |
 
+**Events:**
+
+| Event | Description |
+|-------|-------------|
+| `started` | Agent loop started |
+| `thinking` | About to call the LLM |
+| `text_delta` | New text token chunk (`data['content']`) |
+| `tool_call` | Tool call dispatched |
+| `tool_result` | Tool result received |
+| `complete` | Agent finished successfully |
+
 **Example:**
 
 ```php
 $result = $this->agentic->runStream('general', $messages, function (string $event, array $data) {
-    echo "event: {$event}\ndata: " . json_encode($data) . "\n\n";
+    if ($event === 'text_delta') {
+        echo $data['content'];
+        ob_flush();
+    }
 });
 ```
 
@@ -164,19 +178,121 @@ public function chat(array $messages, array $options = []): array
 Pure LLM streaming chat, forwarding chunks to a callback.
 
 ```php
-public function chatStream(array $messages, callable $onChunk, array $options = []): void
+public function chatStream(array $messages, callable $onChunk, array $options = []): array
+```
+
+**Returns:** Normalized array with `content`, `usage`, and optional keys.
+
+**Example:**
+
+```php
+$result = $this->agentic->chatStream($messages, function (array $chunk) {
+    if (isset($chunk['content'])) {
+        echo $chunk['content'];
+        ob_flush();
+    }
+});
+
+echo $result['content']; // Full assembled response
+```
+
+## Session Resume
+
+## OpenAI-Compatible SSE Output
+
+The SDK provides convenience methods that format streaming output as OpenAI-compatible SSE, so frontends built for the OpenAI API can directly consume responses.
+
+### runStreamSse()
+
+Execute a named agent with streaming, outputting OpenAI-compatible SSE chunks.
+
+```php
+public function runStreamSse(
+    string $agentName,
+    array $messages,
+    callable $write,
+    array $options = [],
+): AgentResult
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `$agentName` | string | Agent name |
+| `$messages` | array | Message array |
+| `$write` | callable | SSE line callback `fn(string $sseLine): void` |
+| `$options` | array | Runtime options |
+
+**SSE output format:**
+
+```
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
+
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"}}]}
+
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{...}}
+
+data: [DONE]
 ```
 
 **Example:**
 
 ```php
-$this->agentic->chatStream($messages, function (string $chunk) {
-    echo $chunk;
+$result = $this->agentic->runStreamSse('general', $messages, function (string $sseLine) {
+    echo $sseLine;
     ob_flush();
 });
 ```
 
-## Session Resume
+### runStreamWithConfigSse()
+
+Streaming variant of `runWithConfig()` with OpenAI SSE output.
+
+```php
+public function runStreamWithConfigSse(
+    array $agentConfig,
+    array $messages,
+    callable $write,
+    array $options = [],
+): AgentResult
+```
+
+### chatStreamSse()
+
+Pure LLM streaming chat with OpenAI SSE output.
+
+```php
+public function chatStreamSse(array $messages, callable $write, array $options = []): array
+```
+
+**Returns:** Normalized array with `content`, `usage`, and optional keys.
+
+### Advanced: Custom Formatter
+
+Use the `OpenAiSseFormatter` directly for more control:
+
+```php
+use ChenZhanjie\Agentic\Stream\Formatter\OpenAiSseFormatter;
+
+$formatter = new OpenAiSseFormatter(
+    write: fn(string $line) => echo $line,
+    model: 'gpt-4o',
+    id: 'chatcmpl-custom',
+);
+
+$result = $this->agentic->runStream('agent', $messages, $formatter->asOnEvent());
+$formatter->done();
+```
+
+**Finish reasons:**
+
+| Scenario | `finish_reason` |
+|----------|----------------|
+| Normal completion | `"stop"` |
+| Budget exhausted | `"length"` |
+| Guardrail blocked | `"content_filter"` |
+| Explicit tool_calls | `"tool_calls"` |
 
 ### resume()
 

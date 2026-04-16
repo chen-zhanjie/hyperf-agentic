@@ -4,11 +4,13 @@ declare(strict_types=1);
 namespace ChenZhanjie\Agentic;
 
 use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
+use ChenZhanjie\Agentic\Contract\StreamFormatterInterface;
 use ChenZhanjie\Agentic\Contract\MessageStoreInterface;
 use ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface;
 use ChenZhanjie\Agentic\Contract\SessionStoreInterface;
 use ChenZhanjie\Agentic\Event\EventEmitter;
 use ChenZhanjie\Agentic\Persona\Persona;
+use ChenZhanjie\Agentic\Stream\Formatter\OpenAiSseFormatter;
 
 /**
  * Agentic Facade — Layer 4 unified entry point.
@@ -64,7 +66,7 @@ class Agentic
     {
         $config = $this->getAgentConfig($agentName);
 
-        return $this->runner->run($messages, $config, $options, $onEvent);
+        return $this->runner->runStream($messages, $config, $options, $onEvent);
     }
 
     /**
@@ -99,7 +101,7 @@ class Agentic
         $config = array_replace_recursive($this->defaults, $agentConfig);
         $fullMessages = $this->resolveMessages($messages, $options);
 
-        $result = $this->runner->run($fullMessages, $config, $options, $onEvent);
+        $result = $this->runner->runStream($fullMessages, $config, $options, $onEvent);
 
         if ($result->isComplete()) {
             $this->persistMessages($options, $messages, $result);
@@ -111,7 +113,7 @@ class Agentic
     /**
      * Pure LLM streaming chat — forwards chunks to onChunk callback.
      */
-    public function chatStream(array $messages, callable $onChunk, array $options = []): void
+    public function chatStream(array $messages, callable $onChunk, array $options = []): array
     {
         $config = array_merge(
             $this->defaults,
@@ -123,7 +125,63 @@ class Agentic
             'model' => $options['model_override'] ?? $config['model'] ?? null,
         ];
 
-        $this->runner->chatStream($messages, $llmOptions, $onChunk);
+        return $this->runner->chatStream($messages, $llmOptions, $onChunk);
+    }
+
+    // ── SSE Convenience Methods ──
+
+    /**
+     * Execute a named agent with streaming, formatted as OpenAI SSE.
+     *
+     * @param callable $write  fn(string $sseLine): void — receives raw SSE lines
+     */
+    public function runStreamSse(string $agentName, array $messages, callable $write, array $options = []): AgentResult
+    {
+        $formatter = new OpenAiSseFormatter(
+            write: $write,
+            model: $options['model'] ?? $this->agentDefs[$agentName]['model'] ?? '',
+        );
+
+        $result = $this->runStream($agentName, $messages, $formatter->asOnEvent(), $options);
+        $formatter->done();
+
+        return $result;
+    }
+
+    /**
+     * Execute an agent with dynamic config + streaming, formatted as OpenAI SSE.
+     *
+     * @param callable $write  fn(string $sseLine): void — receives raw SSE lines
+     */
+    public function runStreamWithConfigSse(array $agentConfig, array $messages, callable $write, array $options = []): AgentResult
+    {
+        $formatter = new OpenAiSseFormatter(
+            write: $write,
+            model: $options['model'] ?? $agentConfig['model'] ?? '',
+        );
+
+        $result = $this->runStreamWithConfig($agentConfig, $messages, $formatter->asOnEvent(), $options);
+        $formatter->done();
+
+        return $result;
+    }
+
+    /**
+     * Pure LLM streaming chat, formatted as OpenAI SSE.
+     *
+     * @param callable $write  fn(string $sseLine): void — receives raw SSE lines
+     */
+    public function chatStreamSse(array $messages, callable $write, array $options = []): array
+    {
+        $formatter = new OpenAiSseFormatter(
+            write: $write,
+            model: $options['model_override'] ?? $this->agentDefs['__llm__']['model'] ?? '',
+        );
+
+        $result = $this->chatStream($messages, $formatter->asOnChunk(), $options);
+        $formatter->finish($result['usage'] ?? []);
+
+        return $result;
     }
 
     /**

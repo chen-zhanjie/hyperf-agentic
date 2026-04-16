@@ -62,12 +62,12 @@ class LlmClient
         );
     }
 
-    public function chatStream(array $messages, array $options, callable $onChunk): void
+    public function chatStream(array $messages, array $options, callable $onChunk): array
     {
         $provider = $options['provider'] ?? $this->defaultProvider;
         $providers = $this->getFailoverChain($provider);
 
-        $this->retry(
+        return $this->retry(
             fn(string $p) => $this->doChatStream($p, $messages, $options, $onChunk),
             $providers,
         );
@@ -110,20 +110,16 @@ class LlmClient
         return $this->callBuiltInAdapter($provider, $config, $messages, $options);
     }
 
-    protected function doChatStream(string $provider, array $messages, array $options, callable $onChunk): void
+    protected function doChatStream(string $provider, array $messages, array $options, callable $onChunk): array
     {
         $config = $this->getProviderConfig($provider);
         $options['model'] = $options['model'] ?? $config['model'] ?? 'gpt-4o';
 
         if ($this->adapterFactory !== null) {
-            ($this->adapterFactory)('chatStream', $provider, $config, $messages, $options, $onChunk);
-            return;
+            return ($this->adapterFactory)('chatStream', $provider, $config, $messages, $options, $onChunk);
         }
 
-        // Built-in streaming not yet implemented for adapters
-        throw new \RuntimeException(
-            "Streaming requires an adapterFactory. Built-in adapter streaming is not yet available."
-        );
+        return $this->callBuiltInAdapterStream($provider, $config, $messages, $options, $onChunk);
     }
 
     /**
@@ -145,6 +141,28 @@ class LlmClient
         return match ($protocol) {
             'anthropic' => (new AnthropicAdapter($apiKey, $baseUrl))->chat($messages, $options),
             default => (new OpenAiAdapter($apiKey, $baseUrl))->chat($messages, $options),
+        };
+    }
+
+    /**
+     * Dispatch streaming request to the correct built-in adapter.
+     */
+    private function callBuiltInAdapterStream(string $provider, array $config, array $messages, array $options, callable $onChunk): array
+    {
+        $protocol = $config['protocol'] ?? 'openai';
+        $baseUrl = $config['base_url'] ?? $config['url'] ?? '';
+        $apiKey = $config['api_key'] ?? '';
+
+        if ($baseUrl === '' || $apiKey === '') {
+            throw new \RuntimeException(
+                "Built-in adapter requires 'base_url' and 'api_key' in provider config for [{$provider}]. "
+                . "Alternatively, provide an adapterFactory callable."
+            );
+        }
+
+        return match ($protocol) {
+            'anthropic' => (new AnthropicAdapter($apiKey, $baseUrl))->chatStream($messages, $options, $onChunk),
+            default => (new OpenAiAdapter($apiKey, $baseUrl))->chatStream($messages, $options, $onChunk),
         };
     }
 

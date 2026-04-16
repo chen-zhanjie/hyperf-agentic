@@ -56,6 +56,34 @@ class AnthropicAdapter
     }
 
     /**
+     * Send a streaming messages request to the Anthropic API.
+     *
+     * @param array    $messages SDK-format messages
+     * @param array    $options  LLM options
+     * @param callable $onChunk  fn(array $chunk) => void
+     * @return array Normalized response (usage may be empty for streaming)
+     */
+    public function chatStream(array $messages, array $options, callable $onChunk): array
+    {
+        $model = $options['model'] ?? 'claude-sonnet-4-20250514';
+
+        [$systemPrompt, $cleanMessages] = $this->extractSystemPrompt($messages);
+        $anthropicMessages = $this->convertMessages($cleanMessages);
+        $tools = $this->convertTools($options['tools'] ?? null);
+
+        $body = array_filter([
+            'model' => $model,
+            'max_tokens' => $options['max_tokens'] ?? 4096,
+            'system' => $systemPrompt,
+            'messages' => $anthropicMessages,
+            'tools' => $tools,
+            'stream' => true,
+        ], fn(mixed $v): bool => $v !== null && $v !== '');
+
+        return $this->httpStream(rtrim($this->baseUrl, '/') . '/messages', $body, $onChunk);
+    }
+
+    /**
      * Extract system messages from the SDK message array.
      * Anthropic requires system prompt as a top-level parameter, not in messages.
      *
@@ -273,5 +301,143 @@ class AnthropicAdapter
         }
 
         return $data;
+    }
+
+    /**
+     * Execute a streaming HTTP POST and parse SSE chunks.
+     *
+     * @param callable $onChunk fn(array $chunk) => void
+     */
+    private function httpStream(string $url, array $body, callable $onChunk): array
+    {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/json',
+                'x-api-key: ' . $this->apiKey,
+                'anthropic-version: 2023-06-01',
+                'Accept: text/event-stream',
+            ],
+            CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE),
+            CURLOPT_TIMEOUT => $this->timeout,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_WRITEFUNCTION => function ($_, string $data) use ($onChunk): int {
+                $this->processSseLine($data, $onChunk);
+                return strlen($data);
+            },
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($error) {
+            throw new \RuntimeException("HTTP request failed: {$error}");
+        }
+
+        if ($httpCode !== 200) {
+            throw new \RuntimeException("Anthropic API error (HTTP {$httpCode})");
+        }
+
+        return $this->buildStreamedResponse();
+    }
+
+    /** @var string Accumulated SSE buffer across write callbacks */
+    private string $sseBuffer = '';
+
+    /** @var array<string, mixed> Accumulated streamed state */
+    private array $streamState = [];
+
+    private function processSseLine(string $raw, callable $onChunk): void
+    {
+        $this->sseBuffer .= $raw;
+        $lines = explode("\n", $this->sseBuffer);
+        $this->sseBuffer = array_pop($lines); // keep incomplete tail
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || $line === 'data: [DONE]') {
+                continue;
+            }
+            if (!str_starts_with($line, 'data: ')) {
+                continue;
+            }
+
+            $json = substr($line, 6);
+            $data = json_decode($json, true);
+            if (!is_array($data)) {
+                continue;
+            }
+
+            $type = $data['type'] ?? '';
+
+            if ($type === 'content_block_delta') {
+                $delta = $data['delta'] ?? [];
+                $deltaType = $delta['type'] ?? '';
+
+                if ($deltaType === 'text_delta' && isset($delta['text'])) {
+                    $onChunk(['content' => $delta['text']]);
+                }
+
+                if ($deltaType === 'thinking_delta' && isset($delta['thinking'])) {
+                    $onChunk(['reasoning_content' => $delta['thinking']]);
+                }
+
+                if ($deltaType === 'input_json_delta' && isset($delta['partial_json'])) {
+                    $index = $data['index'] ?? 0;
+                    if (!isset($this->streamState['tool_calls'][$index])) {
+                        $this->streamState['tool_calls'][$index] = [
+                            'id' => '',
+                            'type' => 'function',
+                            'function' => ['name' => '', 'arguments' => ''],
+                        ];
+                    }
+                    $this->streamState['tool_calls'][$index]['function']['arguments'] .= $delta['partial_json'];
+                }
+            }
+
+            if ($type === 'content_block_start') {
+                $block = $data['content_block'] ?? [];
+                if (($block['type'] ?? '') === 'tool_use') {
+                    $index = $data['index'] ?? 0;
+                    $this->streamState['tool_calls'][$index] = [
+                        'id' => $block['id'] ?? '',
+                        'type' => 'function',
+                        'function' => [
+                            'name' => $block['name'] ?? '',
+                            'arguments' => '',
+                        ],
+                    ];
+                }
+            }
+
+            if ($type === 'message_stop') {
+                $this->streamState['finish_reason'] = 'stop';
+            }
+        }
+    }
+
+    private function buildStreamedResponse(): array
+    {
+        $result = [
+            'content' => '',
+            'usage' => ['prompt_tokens' => 0, 'completion_tokens' => 0],
+        ];
+
+        if (!empty($this->streamState['tool_calls'])) {
+            // Ensure arguments are valid JSON strings
+            foreach ($this->streamState['tool_calls'] as $i => $tc) {
+                $args = $tc['function']['arguments'] ?? '';
+                json_decode($args);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    $this->streamState['tool_calls'][$i]['function']['arguments'] = '{}';
+                }
+            }
+            $result['tool_calls'] = array_values($this->streamState['tool_calls']);
+        }
+
+        return $result;
     }
 }

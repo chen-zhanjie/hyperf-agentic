@@ -30,13 +30,13 @@ class AgenticStreamTest extends TestCase
         );
     }
 
-    public function testRunStreamCallsRunnerRun(): void
+    public function testRunStreamCallsRunnerRunStream(): void
     {
         $result = AgentResult::complete('response', 1, 50, 10, 10);
         $onEvent = fn() => null;
 
         $this->runner->expects($this->once())
-            ->method('run')
+            ->method('runStream')
             ->with(
                 [['role' => 'user', 'content' => 'hello']],
                 $this->callback(fn(array $c) => $c['max_iterations'] === 10),
@@ -60,12 +60,15 @@ class AgenticStreamTest extends TestCase
                 [['role' => 'user', 'content' => 'hi']],
                 $this->callback(fn(array $o) => $o['provider'] === 'openai'),
                 $this->isType('callable'),
-            );
+            )
+            ->willReturn(['content' => 'streamed response']);
 
-        $this->agentic->chatStream(
+        $returned = $this->agentic->chatStream(
             [['role' => 'user', 'content' => 'hi']],
             fn(string $chunk) => null,
         );
+
+        $this->assertSame('streamed response', $returned['content']);
     }
 
     public function testChatStreamWithModelOverride(): void
@@ -76,12 +79,15 @@ class AgenticStreamTest extends TestCase
                 $this->anything(),
                 $this->callback(fn(array $o) => $o['model'] === 'gpt-3.5-turbo'),
                 $this->anything(),
-            );
+            )
+            ->willReturn(['content' => 'override response']);
 
-        $this->agentic->chatStream(
+        $returned = $this->agentic->chatStream(
             [['role' => 'user', 'content' => 'hi']],
             fn(string $chunk) => null,
             ['model_override' => 'gpt-3.5-turbo'],
         );
+
+        $this->assertSame('override response', $returned['content']);
     }
 }
