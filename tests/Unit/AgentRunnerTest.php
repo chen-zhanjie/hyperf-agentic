@@ -9,15 +9,20 @@ use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\Contract\GuardrailInterface;
 use ChenZhanjie\Agentic\Contract\MiddlewareInterface;
 use ChenZhanjie\Agentic\Contract\SkillInterface;
+use ChenZhanjie\Agentic\Contract\ToolGuardrailInterface;
 use ChenZhanjie\Agentic\Contract\ToolInterface;
+use ChenZhanjie\Agentic\Contract\ToolPermissionPolicyInterface;
+use ChenZhanjie\Agentic\ToolGuardrailResult;
 use ChenZhanjie\Agentic\GuardrailMode;
 use ChenZhanjie\Agentic\GuardrailResult;
 use ChenZhanjie\Agentic\GuardrailRunner;
 use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
+use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\PromptBuilder;
 use ChenZhanjie\Agentic\Skill\SkillRegistry;
+use ChenZhanjie\Agentic\ToolGuardrailRunner;
 use ChenZhanjie\Agentic\ToolRegistry;
 
 class AgentRunnerTest extends TestCase
@@ -709,6 +714,8 @@ class AgentRunnerTest extends TestCase
         ?GuardrailRunner $guardrailRunner = null,
         ?MiddlewarePipeline $pipeline = null,
         ?SkillRegistry $skillRegistry = null,
+        ?ToolGuardrailRunner $toolGuardrailRunner = null,
+        ?ToolPermissionPolicyInterface $permissionPolicy = null,
     ): AgentRunner {
         return new AgentRunner(
             llmClient: $llmClient,
@@ -716,6 +723,8 @@ class AgentRunnerTest extends TestCase
             toolRegistry: $toolRegistry ?? new ToolRegistry(),
             guardrailRunner: $guardrailRunner ?? new GuardrailRunner(),
             middleware: $pipeline ?? new MiddlewarePipeline(),
+            toolGuardrailRunner: $toolGuardrailRunner ?? new ToolGuardrailRunner(),
+            permissionPolicy: $permissionPolicy ?? new ConfigToolPermissionPolicy(),
             skillRegistry: $skillRegistry,
         );
     }
@@ -874,6 +883,103 @@ class AgentRunnerTest extends TestCase
         $this->assertTrue($result->isComplete());
     }
 
+    // ── M1: TOOL_BLOCKED event emission ──
+
+    public function testToolBlockedEventEmittedWhenToolGuardrailBlocks(): void
+    {
+        $toolGuardrail = new class implements ToolGuardrailInterface {
+            public function name(): string { return 'input_validator'; }
+            public function checkToolInput(string $toolName, array $arguments): ToolGuardrailResult
+            {
+                return ToolGuardrailResult::blocked('Invalid arguments');
+            }
+            public function checkToolOutput(string $toolName, array $arguments, string $result): ToolGuardrailResult
+            {
+                return ToolGuardrailResult::ok();
+            }
+        };
+
+        $toolGuardrailRunner = new ToolGuardrailRunner();
+        $toolGuardrailRunner->register($toolGuardrail);
+
+        $llm = $this->createMockLlm([
+            [
+                'content' => null,
+                'tool_calls' => [[
+                    'id' => 'call_1',
+                    'type' => 'function',
+                    'function' => ['name' => 'search', 'arguments' => '{}'],
+                ]],
+                'usage' => $this->usage(50, 20),
+            ],
+            ['content' => 'Done', 'usage' => $this->usage(50, 20)],
+        ]);
+
+        $events = [];
+        $onEvent = function (string $type, array $payload) use (&$events): void {
+            $events[] = $type;
+        };
+
+        $runner = $this->createRunner($llm, toolGuardrailRunner: $toolGuardrailRunner);
+        $result = $runner->run(
+            [['role' => 'user', 'content' => 'search']],
+            $this->defaultConfig(),
+            [],
+            $onEvent,
+        );
+
+        $this->assertContains('tool_blocked', $events, 'TOOL_BLOCKED event should be emitted when tool guardrail blocks');
+    }
+
+    // ── M2: TOOL_DENIED event emission ──
+
+    public function testToolDeniedEventEmittedWhenPermissionPolicyDenies(): void
+    {
+        $denyAllPolicy = new class implements ToolPermissionPolicyInterface {
+            public function decide(string $toolName, \ChenZhanjie\Agentic\ToolRiskLevel $riskLevel, array $arguments): \ChenZhanjie\Agentic\ToolPermissionDecision
+            {
+                return \ChenZhanjie\Agentic\ToolPermissionDecision::DENY;
+            }
+        };
+
+        $llm = $this->createMockLlm([
+            [
+                'content' => null,
+                'tool_calls' => [[
+                    'id' => 'call_1',
+                    'type' => 'function',
+                    'function' => ['name' => 'search', 'arguments' => '{}'],
+                ]],
+                'usage' => $this->usage(50, 20),
+            ],
+            ['content' => 'Done', 'usage' => $this->usage(50, 20)],
+        ]);
+
+        $events = [];
+        $onEvent = function (string $type, array $payload) use (&$events): void {
+            $events[] = $type;
+        };
+
+        $runner = new AgentRunner(
+            llmClient: $llm,
+            promptBuilder: new PromptBuilder(),
+            toolRegistry: new ToolRegistry(),
+            guardrailRunner: new GuardrailRunner(),
+            middleware: new MiddlewarePipeline(),
+            toolGuardrailRunner: new ToolGuardrailRunner(),
+            permissionPolicy: $denyAllPolicy,
+        );
+
+        $result = $runner->run(
+            [['role' => 'user', 'content' => 'search']],
+            $this->defaultConfig(),
+            [],
+            $onEvent,
+        );
+
+        $this->assertContains('tool_denied', $events, 'TOOL_DENIED event should be emitted when permission policy denies');
+    }
+
     // ── PromptBuilder reset between runs ──
 
     public function testPromptBuilderResetBetweenRunsPreventsCacheLeak(): void
@@ -887,7 +993,7 @@ class AgentRunnerTest extends TestCase
         ]);
 
         $builder = new PromptBuilder();
-        $runner = new AgentRunner($llm, $builder, new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, $builder, new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         // Run 1: Persona Alpha
         $runner->run(

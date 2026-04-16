@@ -15,8 +15,10 @@ use ChenZhanjie\Agentic\GuardrailRunner;
 use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
+use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\PromptBuilder;
 use ChenZhanjie\Agentic\Session\MemoryMessageStore;
+use ChenZhanjie\Agentic\ToolGuardrailRunner;
 use ChenZhanjie\Agentic\ToolRegistry;
 use ChenZhanjie\Agentic\Event\AgentEventType;
 
@@ -27,7 +29,7 @@ class AgenticTest extends TestCase
     public function testRunDelegatesToAgentRunner(): void
     {
         $llm = $this->createMockLlm([['content' => 'Hello!', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
             runner: $runner,
@@ -50,7 +52,7 @@ class AgenticTest extends TestCase
     public function testRunPassesAgentConfig(): void
     {
         $llm = $this->createMockLlm([['content' => 'response', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
             runner: $runner,
@@ -73,7 +75,7 @@ class AgenticTest extends TestCase
     public function testRunThrowsForUndefinedAgent(): void
     {
         $llm = $this->createMockLlm([]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
             runner: $runner,
@@ -92,7 +94,7 @@ class AgenticTest extends TestCase
     public function testChatReturnsStringResponse(): void
     {
         $llm = $this->createMockLlm(['plain text response']);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
             runner: $runner,
@@ -195,7 +197,7 @@ class AgenticTest extends TestCase
     public function testRunWithConfigBypassesAgentNameLookup(): void
     {
         $llm = $this->createMockLlm([['content' => 'Dynamic response', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
             runner: $runner,
@@ -216,7 +218,7 @@ class AgenticTest extends TestCase
     public function testRunWithConfigMergesDefaults(): void
     {
         $llm = $this->createMockLlm([['content' => 'ok', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
             runner: $runner,
@@ -236,7 +238,7 @@ class AgenticTest extends TestCase
     public function testRunStreamWithConfigWorks(): void
     {
         $llm = $this->createMockLlm([['content' => 'streamed', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
             runner: $runner,
@@ -277,7 +279,7 @@ class AgenticTest extends TestCase
             },
         );
 
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
         $agentic = new Agentic(
             runner: $runner,
             toolRegistry: new ToolRegistry(),
@@ -311,7 +313,7 @@ class AgenticTest extends TestCase
     public function testRunWithConfigWithoutConversationIdIsStateless(): void
     {
         $llm = $this->createMockLlm([['content' => 'Response', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $messageStore = new MemoryMessageStore();
         $agentic = new Agentic(
@@ -347,7 +349,7 @@ class AgenticTest extends TestCase
         });
 
         $llm = $this->createMockLlm(['should not be called']);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), $guardrailRunner, new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), $guardrailRunner, new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $messageStore = new MemoryMessageStore();
         $agentic = new Agentic(
@@ -376,7 +378,7 @@ class AgenticTest extends TestCase
     ): Agentic {
         $registry = $toolRegistry ?? new ToolRegistry();
         $llm = $this->createMockLlm([]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), $registry, new GuardrailRunner(), new MiddlewarePipeline());
+        $runner = new AgentRunner($llm, new PromptBuilder(), $registry, new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         return new Agentic(
             runner: $runner,

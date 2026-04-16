@@ -10,5 +10,6 @@ class GuardrailEntry
     public function __construct(
         public readonly GuardrailInterface $guardrail,
         public readonly GuardrailMode $mode = GuardrailMode::SYNC,
+        public readonly int $priority = 0,
     ) {}
 }

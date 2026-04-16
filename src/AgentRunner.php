@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace ChenZhanjie\Agentic;
 
 use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
+use ChenZhanjie\Agentic\Contract\ToolPermissionPolicyInterface;
+use ChenZhanjie\Agentic\Contract\RiskyToolInterface;
 use ChenZhanjie\Agentic\Event\AgentEventType;
 use ChenZhanjie\Agentic\Event\EventEmitter;
 use ChenZhanjie\Agentic\Persona\Persona;
@@ -25,15 +27,14 @@ class AgentRunner
     /** @var HumanInputResolverInterface|null Injected before dispatch for AskTool */
     private ?HumanInputResolverInterface $humanInputResolver = null;
 
-    /** @var GuardrailRunner|null Active guardrails for current run (per-agent filtered) */
-    private ?GuardrailRunner $activeGuardrails = null;
-
     public function __construct(
         private readonly LlmClient $llmClient,
         private readonly PromptBuilder $promptBuilder,
         private readonly ToolRegistry $toolRegistry,
         private readonly GuardrailRunner $guardrailRunner,
         private readonly MiddlewarePipeline $middleware,
+        private readonly ToolGuardrailRunner $toolGuardrailRunner,
+        private readonly ToolPermissionPolicyInterface $permissionPolicy,
         private readonly ?SkillRegistry $skillRegistry = null,
     ) {}
 
@@ -102,11 +103,20 @@ class AgentRunner
         }
 
         // Resolve active guardrails (per-agent filtering)
-        $this->activeGuardrails = $this->guardrailRunner;
+        $activeGuardrails = $this->guardrailRunner;
         $guardrailWhitelist = $agentConfig['guardrails'] ?? [];
         if (!empty($guardrailWhitelist)) {
-            $this->activeGuardrails = $this->guardrailRunner->only($guardrailWhitelist);
+            $activeGuardrails = $this->guardrailRunner->only($guardrailWhitelist);
         }
+
+        // Build per-request context
+        $context = new AgentRunContext(
+            guardrails: $activeGuardrails,
+            toolGuardrails: $this->toolGuardrailRunner,
+            permissionPolicy: $this->permissionPolicy,
+            humanInputResolver: $this->humanInputResolver,
+            agentToolHandlers: $this->agentToolHandlers,
+        );
 
         $toolSchemas = $activeRegistry->getAvailableSchemas();
         $enabledSkills = $agentConfig['skills'] ?? [];
@@ -139,6 +149,7 @@ class AgentRunner
             $fullMessages, $systemMessage, $toolSchemas, $budget, $remainingIterations,
             $costBudget, [], null, $startTime,
             $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+            $context, null, 5000,
         );
 
         if ($result === null && $budget->consumeGrace() && !$costBudget->isExceeded()) {
@@ -146,6 +157,7 @@ class AgentRunner
                 $fullMessages, $systemMessage, $toolSchemas, $budget,
                 $costBudget, [], null, $startTime,
                 $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+                $context, null,
             );
         }
 
@@ -204,10 +216,10 @@ class AgentRunner
         }
 
         // Resolve active guardrails (per-agent filtering + mode overrides)
-        $this->activeGuardrails = $this->guardrailRunner;
+        $activeGuardrails = $this->guardrailRunner;
         $guardrailWhitelist = $agentConfig['guardrails'] ?? [];
         if (!empty($guardrailWhitelist)) {
-            $this->activeGuardrails = $this->guardrailRunner->only($guardrailWhitelist);
+            $activeGuardrails = $this->guardrailRunner->only($guardrailWhitelist);
         }
 
         // Apply guardrail mode overrides from config
@@ -217,11 +229,27 @@ class AgentRunner
             foreach ($guardrailModes as $name => $modeStr) {
                 $modeMap[$name] = GuardrailMode::from($modeStr);
             }
-            $this->activeGuardrails = $this->activeGuardrails->withModes($modeMap);
+            $activeGuardrails = $activeGuardrails->withModes($modeMap);
         }
 
+        // Build per-request context
+        $cancellationToken = null;
+        $cancellationTimeoutMs = (int) ($agentConfig['cancellation_timeout_ms'] ?? 0);
+        if ($cancellationTimeoutMs > 0) {
+            $cancellationToken = CancellationToken::withTimeout($cancellationTimeoutMs);
+        }
+
+        $context = new AgentRunContext(
+            guardrails: $activeGuardrails,
+            toolGuardrails: $this->toolGuardrailRunner,
+            permissionPolicy: $this->permissionPolicy,
+            humanInputResolver: $this->humanInputResolver,
+            agentToolHandlers: $this->agentToolHandlers,
+            cancellationToken: $cancellationToken,
+        );
+
         // Phase 2: Input guardrails (async-aware)
-        $inputGuardContext = $this->activeGuardrails->checkInputAsync($messages);
+        $inputGuardContext = $context->guardrails->checkInputAsync($messages);
         if ($inputGuardContext->isBlocked()) {
             $blockResult = $inputGuardContext->getBlockResult();
             $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
@@ -274,6 +302,7 @@ class AgentRunner
             $fullMessages, $systemMessage, $toolSchemas, $budget, $maxIterations,
             $costBudget, $options, $onEvent, $startTime,
             $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+            $context,
             $inputGuardContext,
             $asyncGuardrailTimeout,
         );
@@ -284,6 +313,7 @@ class AgentRunner
                 $fullMessages, $systemMessage, $toolSchemas, $budget,
                 $costBudget, $options, $onEvent, $startTime,
                 $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
+                $context,
                 $inputGuardContext,
             );
         }
@@ -318,10 +348,11 @@ class AgentRunner
         int &$totalPromptTokens,
         int &$totalCompletionTokens,
         int &$totalToolCalls,
+        AgentRunContext $context,
         ?AsyncGuardrailContext $inputGuardContext = null,
         int $asyncGuardrailTimeout = 5000,
     ): ?AgentResult {
-        while ($budget->consume() && !$costBudget->isExceeded()) {
+        while ($budget->consume() && !$costBudget->isExceeded() && !$context->isCancelled()) {
             // Check async input guardrails (may complete between iterations)
             if ($inputGuardContext !== null && $inputGuardContext->isBlocked()) {
                 $blockResult = $inputGuardContext->getBlockResult();
@@ -340,7 +371,7 @@ class AgentRunner
                 $fullMessages, $systemMessage, $toolSchemas, $budget,
                 $costBudget, $options, $onEvent, $startTime,
                 $iterations, $totalPromptTokens, $totalCompletionTokens, $totalToolCalls,
-                $asyncGuardrailTimeout,
+                $context, $asyncGuardrailTimeout,
             );
 
             if ($turnResult !== null) {
@@ -368,6 +399,7 @@ class AgentRunner
         int &$totalPromptTokens,
         int &$totalCompletionTokens,
         int &$totalToolCalls,
+        AgentRunContext $context,
         ?AsyncGuardrailContext $inputGuardContext = null,
     ): ?AgentResult {
         ++$iterations;
@@ -407,7 +439,7 @@ class AgentRunner
         if (empty($toolCalls)) {
             $textContent = is_string($content) ? $content : (string) ($content ?? '');
 
-            $outputGuardContext = $this->activeGuardrails->checkOutputAsync($textContent);
+            $outputGuardContext = $context->guardrails->checkOutputAsync($textContent);
             if ($outputGuardContext->isBlocked()) {
                 $blockResult = $outputGuardContext->getBlockResult();
                 $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
@@ -467,7 +499,7 @@ class AgentRunner
             'tool_calls' => $toolCalls,
         ];
 
-        $this->processToolCalls($toolCalls, $fullMessages, $onEvent, 'grace', false);
+        $this->processToolCalls($toolCalls, $fullMessages, $onEvent, 'grace', false, $context);
 
         return null; // Grace turn didn't produce text → truly exhausted
     }
@@ -489,6 +521,7 @@ class AgentRunner
         int &$totalPromptTokens,
         int &$totalCompletionTokens,
         int &$totalToolCalls,
+        AgentRunContext $context,
         int $asyncGuardrailTimeout = 5000,
     ): ?AgentResult {
         // Build ephemeral prompt for this turn
@@ -535,7 +568,7 @@ class AgentRunner
             $textContent = is_string($content) ? $content : (string) ($content ?? '');
 
             // Phase 7: Output guardrail check (async-aware)
-            $outputGuardContext = $this->activeGuardrails->checkOutputAsync($textContent);
+            $outputGuardContext = $context->guardrails->checkOutputAsync($textContent);
 
             // Sync guardrail blocked immediately (before output reaches client)
             if ($outputGuardContext->isBlocked() && !$outputGuardContext->hasAsyncGuardrails()) {
@@ -600,7 +633,7 @@ class AgentRunner
             'tool_calls' => $toolCalls,
         ];
 
-        $this->processToolCalls($toolCalls, $fullMessages, $onEvent, (string) $iterations, true);
+        $this->processToolCalls($toolCalls, $fullMessages, $onEvent, (string) $iterations, true, $context);
 
         return null; // Tool calls processed — continue loop
     }
@@ -615,6 +648,7 @@ class AgentRunner
         ?callable $onEvent,
         string $callIdPrefix,
         bool $enforceParallel,
+        AgentRunContext $context,
     ): void {
         // Pre-check: detect non-parallel tools in the batch
         $hasNonParallel = false;
@@ -649,7 +683,7 @@ class AgentRunner
                 'arguments' => $arguments,
             ]);
 
-            $toolResult = $this->dispatchTool($toolName, $arguments);
+            $toolResult = $this->dispatchTool($toolName, $arguments, $context, $onEvent);
 
             $this->emitEvent($onEvent, AgentEventType::TOOL_RESULT, [
                 'call_id' => $callId,
@@ -672,8 +706,50 @@ class AgentRunner
      * 2. Agent-level handler
      * 3. ToolRegistry standard dispatch
      */
-    private function dispatchTool(string $name, array $arguments): string
+    private function dispatchTool(string $name, array $arguments, AgentRunContext $context, ?callable $onEvent = null): string
     {
+        // Step 0: Tool guardrail — check input (can block or sanitize arguments)
+        $inputCheck = $context->toolGuardrails->checkToolInput($name, $arguments);
+        if ($inputCheck !== null && $inputCheck->blocked) {
+            $this->emitEvent($onEvent, AgentEventType::TOOL_BLOCKED, [
+                'name' => $name,
+                'reason' => $inputCheck->reason,
+            ]);
+            return "工具调用被拦截 [{$name}]: {$inputCheck->reason}";
+        }
+
+        // Step 0.5: Permission check — deny/ask based on risk level
+        $riskLevel = ToolRiskLevel::LOW;
+        try {
+            $tool = $this->toolRegistry->resolve($name);
+            if ($tool instanceof RiskyToolInterface) {
+                $riskLevel = $tool->riskLevel();
+            }
+        } catch (\InvalidArgumentException) {
+            // Unknown tool — will be handled by ToolRegistry::execute()
+        }
+
+        $decision = $context->permissionPolicy->decide($name, $riskLevel, $arguments);
+        if ($decision === ToolPermissionDecision::DENY) {
+            $this->emitEvent($onEvent, AgentEventType::TOOL_DENIED, [
+                'name' => $name,
+                'reason' => 'Permission policy denied',
+            ]);
+            return "工具 [{$name}] 被权限策略拒绝";
+        }
+        if ($decision === ToolPermissionDecision::ASK) {
+            if ($context->humanInputResolver === null || !$context->humanInputResolver->isBlocking()) {
+                return "工具 [{$name}] 需要人工确认，但当前环境不支持交互式确认";
+            }
+            $approval = $context->humanInputResolver->ask(
+                "工具 [{$name}] 请求执行权限（风险等级: {$riskLevel->value}）。是否允许？",
+                [],
+            );
+            if (!($approval['confirmed'] ?? false)) {
+                return "工具 [{$name}] 被用户拒绝执行";
+            }
+        }
+
         // Step 1: Middleware interception
         $intercepted = $this->middleware->beforeToolCall($name, $arguments);
         if ($intercepted !== null) {
@@ -682,24 +758,32 @@ class AgentRunner
         }
 
         // Step 2: Agent-level handler
-        if (isset($this->agentToolHandlers[$name])) {
+        if (isset($context->agentToolHandlers[$name])) {
             try {
-                $result = ($this->agentToolHandlers[$name])($arguments);
+                $result = ($context->agentToolHandlers[$name])($arguments);
                 $resultText = is_array($result) ? json_encode($result, JSON_UNESCAPED_UNICODE) : (string) $result;
             } catch (\Throwable $e) {
                 $resultText = "工具执行错误 [{$name}]: " . $e->getMessage();
             }
+
+            // Tool guardrail — check output
+            $outputCheck = $context->toolGuardrails->checkToolOutput($name, $arguments, $resultText);
+            if ($outputCheck !== null && $outputCheck->blocked) {
+                $this->middleware->afterToolCall($name, $arguments, "工具输出被拦截: {$outputCheck->reason}");
+                return "工具输出被拦截 [{$name}]: {$outputCheck->reason}";
+            }
+
             $this->middleware->afterToolCall($name, $arguments, $resultText);
             return $resultText;
         }
 
         // Step 3: ToolRegistry dispatch
         // Inject resolver into AskTool if applicable
-        if ($name === 'ask') {
+        if ($name === 'ask' && $context->humanInputResolver !== null) {
             try {
                 $tool = $this->toolRegistry->resolve($name);
-                if ($tool instanceof AskTool && $this->humanInputResolver !== null) {
-                    $tool->setResolver($this->humanInputResolver);
+                if ($tool instanceof AskTool) {
+                    $tool->setResolver($context->humanInputResolver);
                 }
             } catch (\InvalidArgumentException) {
                 // Tool not registered, fall through to execute() which handles the error
@@ -708,6 +792,14 @@ class AgentRunner
 
         $executionResult = $this->toolRegistry->execute($name, $arguments);
         $resultText = $executionResult->toText();
+
+        // Tool guardrail — check output
+        $outputCheck = $context->toolGuardrails->checkToolOutput($name, $arguments, $resultText);
+        if ($outputCheck !== null && $outputCheck->blocked) {
+            $this->middleware->afterToolCall($name, $arguments, "工具输出被拦截: {$outputCheck->reason}");
+            return "工具输出被拦截 [{$name}]: {$outputCheck->reason}";
+        }
+
         $this->middleware->afterToolCall($name, $arguments, $resultText);
 
         return $resultText;

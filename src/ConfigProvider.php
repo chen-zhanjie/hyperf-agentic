@@ -34,6 +34,8 @@ class ConfigProvider
             Contract\MemoryProviderInterface::class => NullMemoryProvider::class,
             Contract\MessageStoreInterface::class => Session\MemoryMessageStore::class,
             Contract\TraceExporterInterface::class => Tracing\LogTraceExporter::class,
+            Contract\ToolPermissionPolicyInterface::class => Policy\ConfigToolPermissionPolicy::class,
+            Contract\GuardrailAuditLoggerInterface::class => GuardrailAuditLogger::class,
 
             // Layer 2: Subsystems
             Persona\PersonaLoader::class => Persona\PersonaLoader::class,
@@ -51,6 +53,7 @@ class ConfigProvider
             PromptBuilder::class => PromptBuilder::class,
             LlmClient::class => LlmClient::class,
             GuardrailRunner::class => GuardrailRunner::class,
+            ToolGuardrailRunner::class => ToolGuardrailRunner::class,
             MiddlewarePipeline::class => MiddlewarePipeline::class,
             AgentRunner::class => AgentRunner::class,
 

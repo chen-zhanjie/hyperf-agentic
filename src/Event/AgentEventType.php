@@ -25,4 +25,8 @@ enum AgentEventType: string
     case GUARDRAIL_BLOCKED = 'guardrail_blocked';
     case GUARDRAIL_RECALLED = 'guardrail_recalled';
     case MESSAGE_RECALLED = 'message_recalled';
+
+    case TOOL_BLOCKED = 'tool_blocked';
+    case TOOL_DENIED = 'tool_denied';
+    case GUARDRAIL_DECISION = 'guardrail_decision';
 }

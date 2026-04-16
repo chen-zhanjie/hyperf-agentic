@@ -41,5 +41,22 @@ class GuardrailEntryTest extends TestCase
 
         $this->assertTrue($reflection->getProperty('guardrail')->isReadOnly());
         $this->assertTrue($reflection->getProperty('mode')->isReadOnly());
+        $this->assertTrue($reflection->getProperty('priority')->isReadOnly());
+    }
+
+    public function testDefaultPriorityIsZero(): void
+    {
+        $guardrail = $this->createMock(GuardrailInterface::class);
+        $entry = new GuardrailEntry($guardrail);
+
+        $this->assertSame(0, $entry->priority);
+    }
+
+    public function testExplicitPriority(): void
+    {
+        $guardrail = $this->createMock(GuardrailInterface::class);
+        $entry = new GuardrailEntry($guardrail, GuardrailMode::SYNC, 100);
+
+        $this->assertSame(100, $entry->priority);
     }
 }
