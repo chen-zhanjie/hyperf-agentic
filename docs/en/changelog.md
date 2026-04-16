@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-04-17
+
+### Added
+
+- **`SseWriter`** — Thin SSE transport adapter at `src/Stream/SseWriter.php`. Converts internal events to OpenAI-compatible SSE wire format. Model is auto-captured from the `started` event
+- **`reasoning_delta` event** — `TurnExecutor` now emits `REASONING_DELTA` events during streaming for reasoning/thinking content (previously buffered silently)
+- **`started` event now carries `model`** — `AgentRunner` includes the model name in the `started` event payload, so SSE adapters can auto-capture it
+
+### Changed
+
+- `runWithConfig()` and `runStreamWithConfig()` now accept `Agent|array` for `$agentConfig` parameter
+
+### Removed
+
+- **`runStreamSse()`, `runStreamWithConfigSse()`, `chatStreamSse()`** — SSE formatting is the consumer's responsibility. Use `new SseWriter($write)` + `asOnEvent()` or `asOnChunk()` directly
+- **`OpenAiSseFormatter`** — Replaced by `SseWriter` (moved from `Stream\Formatter` to `Stream` namespace)
+- **`StreamFormatterInterface`** — Removed (YAGNI: single implementation, no external consumers)
+
+## [0.7.0] - 2026-04-16
+
+### Added
+
+- **True token streaming** — `chatStream()` and `runStream()` now emit real SSE token chunks instead of buffering full responses
+- **`LlmAdapterInterface`** — Adapter contract for LLM protocol implementations (`chat()`, `chatStream()`)
+- **`Agent` DTO** — Agent as dataclass pattern (inspired by OpenAI Agents SDK), supports `toArray()` and `fromArray()`
+- **`TurnExecutor`** — Extracted from `AgentRunner`, unifies 4 duplicated methods (executeTurn, executeStreamTurn, runGraceTurn, runStreamGraceTurn) into single parameterized `execute()`
+- **Stateless adapters** — `OpenAiAdapter` and `AnthropicAdapter` streaming state moved from instance properties to local variables
+
+### Fixed
+
+- **Streaming content loss** — `TurnExecutor::callLlmStream()` uses `$textBuffer` for content instead of empty `$response['content']`
+- **Anthropic token usage** — `AnthropicAdapter` now parses `message_start` for input tokens and `message_delta` for output tokens
+
 ## [0.6.0] - 2026-04-16
 
 ### Added

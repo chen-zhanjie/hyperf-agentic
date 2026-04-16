@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-04-17
+
+### 新增
+
+- **`SseWriter`** — 轻量 SSE 传输适配器，位于 `src/Stream/SseWriter.php`。将内部事件转换为 OpenAI 兼容的 SSE 格式。Model 从 `started` 事件自动捕获
+- **`reasoning_delta` 事件** — `TurnExecutor` 在流式传输过程中现在会发出 `REASONING_DELTA` 事件，用于推理/思考内容（之前被静默缓冲）
+- **`started` 事件现在携带 `model`** — `AgentRunner` 在 `started` 事件 payload 中包含 model 名称，SSE 适配器可自动捕获
+
+### 变更
+
+- `runWithConfig()` 和 `runStreamWithConfig()` 的 `$agentConfig` 参数现在接受 `Agent|array` 类型
+
+### 移除
+
+- **`runStreamSse()`、`runStreamWithConfigSse()`、`chatStreamSse()`** — SSE 格式化由消费者负责。直接使用 `new SseWriter($write)` + `asOnEvent()` 或 `asOnChunk()`
+- **`OpenAiSseFormatter`** — 由 `SseWriter` 替代（从 `Stream\Formatter` 命名空间移至 `Stream`）
+- **`StreamFormatterInterface`** — 已删除（YAGNI：仅有一个实现，无外部消费者）
+
+## [0.7.0] - 2026-04-16
+
+### 新增
+
+- **真正的 token 流式传输** — `chatStream()` 和 `runStream()` 现在发出真实的 SSE token 分片，而非缓冲完整响应
+- **`LlmAdapterInterface`** — LLM 协议适配器契约（`chat()`、`chatStream()`）
+- **`Agent` DTO** — Agent 数据类模式（受 OpenAI Agents SDK 启发），支持 `toArray()` 和 `fromArray()`
+- **`TurnExecutor`** — 从 `AgentRunner` 提取，统一 4 个重复方法（executeTurn、executeStreamTurn、runGraceTurn、runStreamGraceTurn）为单一参数化的 `execute()`
+- **无状态适配器** — `OpenAiAdapter` 和 `AnthropicAdapter` 的流式状态从实例属性移至局部变量
+
+### 修复
+
+- **流式内容丢失** — `TurnExecutor::callLlmStream()` 使用 `$textBuffer` 而非空的 `$response['content']`
+- **Anthropic token 用量** — `AnthropicAdapter` 现在解析 `message_start` 获取输入 token 和 `message_delta` 获取输出 token
+
 ## [0.6.0] - 2026-04-16
 
 ### 新增

@@ -11,6 +11,7 @@ enum AgentEventType: string
     case BUDGET_EXCEEDED = 'budget_exceeded';
 
     case TEXT_DELTA = 'text_delta';
+    case REASONING_DELTA = 'reasoning_delta';
     case THINKING = 'thinking';
     case TOOL_CALL = 'tool_call';
     case TOOL_RESULT = 'tool_result';

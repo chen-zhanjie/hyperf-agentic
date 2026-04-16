@@ -221,7 +221,11 @@ src/
 ├── LlmAdapter/        # LLM 协议适配器
 │   ├── OpenAiAdapter.php    # OpenAI /v1/chat/completions
 │   └── AnthropicAdapter.php # Anthropic /v1/messages
+├── Stream/            # 流式传输适配器
+│   └── SseWriter.php        # OpenAI 兼容 SSE 写入器
 ├── AgentRunner.php    # Layer 3: Agent 核心
+├── TurnExecutor.php   # Layer 3: 单轮执行（统一同步/流式）
+├── Agent.php          # Agent DTO（配置即数据）
 ├── ToolDispatcher.php # Layer 3: 工具分发链（护栏 → 权限 → 执行）
 ├── LoopState.php      # 每次请求的可变循环累加器
 ├── AgentRunContext.php # Per-Request 不可变上下文

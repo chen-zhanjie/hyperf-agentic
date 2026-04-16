@@ -1,26 +1,25 @@
 <?php
 declare(strict_types=1);
 
-namespace ChenZhanjie\Agentic\Tests\Unit\Stream\Formatter;
+namespace ChenZhanjie\Agentic\Tests\Unit\Stream;
 
-use ChenZhanjie\Agentic\Stream\Formatter\OpenAiSseFormatter;
+use ChenZhanjie\Agentic\Stream\SseWriter;
 use PHPUnit\Framework\TestCase;
 
-class OpenAiSseFormatterTest extends TestCase
+class SseWriterTest extends TestCase
 {
     /**
-     * Helper: create a formatter that captures SSE output into an object buffer.
-     * Uses stdClass to avoid PHP reference issues with string variables.
+     * Helper: create a SseWriter that captures SSE output into an object buffer.
      */
-    private function createFormatter(string $model = '', string $id = ''): array
+    private function createWriter(string $model = '', string $id = ''): array
     {
         $buf = (object) ['value' => ''];
         $write = function (string $line) use ($buf): void {
             $buf->value .= $line;
         };
-        $formatter = new OpenAiSseFormatter(write: $write, id: $id, model: $model);
+        $writer = new SseWriter(write: $write, id: $id, model: $model);
 
-        return [$formatter, $buf];
+        return [$writer, $buf];
     }
 
     /**
@@ -52,8 +51,8 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testStartedEventEmitsRoleDelta(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
 
         $chunks = $this->parseSse($buf->value);
@@ -72,8 +71,8 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testTextDeltaEmitsContentDelta(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
         $buf->value = ''; // reset to isolate text_delta output
 
@@ -88,8 +87,8 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testMultipleTextDeltasProduceSequentialChunks(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
         $buf->value = '';
 
@@ -102,12 +101,49 @@ class OpenAiSseFormatterTest extends TestCase
         $this->assertSame('lo', json_decode($chunks[1]['data'], true)['choices'][0]['delta']['content']);
     }
 
+    // ── Reasoning delta ──
+
+    public function testReasoningDeltaEmitsReasoningContent(): void
+    {
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
+        $onEvent('started', ['agent' => 'Test']);
+        $buf->value = '';
+
+        $onEvent('reasoning_delta', ['content' => 'Let me think...']);
+        $chunks = $this->parseSse($buf->value);
+        $this->assertCount(1, $chunks);
+
+        $data = json_decode($chunks[0]['data'], true);
+        $this->assertSame('Let me think...', $data['choices'][0]['delta']['reasoning_content']);
+    }
+
+    public function testReasoningDeltaAfterTextDelta(): void
+    {
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
+        $onEvent('started', ['agent' => 'Test']);
+        $buf->value = '';
+
+        $onEvent('reasoning_delta', ['content' => 'thinking...']);
+        $onEvent('text_delta', ['content' => 'Hello']);
+
+        $chunks = $this->parseSse($buf->value);
+        $this->assertCount(2, $chunks);
+
+        $reasoning = json_decode($chunks[0]['data'], true);
+        $this->assertSame('thinking...', $reasoning['choices'][0]['delta']['reasoning_content']);
+
+        $text = json_decode($chunks[1]['data'], true);
+        $this->assertSame('Hello', $text['choices'][0]['delta']['content']);
+    }
+
     // ── Finish + [DONE] ──
 
     public function testCompleteEventEmitsFinishChunkAndDone(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
         $onEvent('text_delta', ['content' => 'Hi']);
 
@@ -136,8 +172,8 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testDoneSentinelIsWrittenExactlyOnce(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
         $onEvent('text_delta', ['content' => 'Hi']);
         $onEvent('complete', ['iterations' => 1, 'elapsed_ms' => 100, 'prompt_tokens' => 10, 'completion_tokens' => 5]);
@@ -147,12 +183,12 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testDoneIsIdempotent(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
         $onEvent('complete', ['iterations' => 1, 'elapsed_ms' => 100, 'prompt_tokens' => 10, 'completion_tokens' => 5]);
 
-        $formatter->done(); // Should not produce another [DONE]
+        $writer->done(); // Should not produce another [DONE]
         $this->assertSame(1, substr_count($buf->value, 'data: [DONE]'));
     }
 
@@ -160,8 +196,8 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testToolCallEventProducesToolCallsDelta(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
         $buf->value = '';
 
@@ -187,8 +223,8 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testMultipleToolCallsGetIncrementingIndices(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
         $buf->value = '';
 
@@ -208,8 +244,8 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testBudgetExceededProducesFinishReasonLength(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
 
         $onEvent('budget_exceeded', ['iterations' => 15, 'max' => 15]);
@@ -225,8 +261,8 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testGuardrailBlockedProducesFinishReasonContentFilter(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
 
         $onEvent('guardrail_blocked', [
@@ -246,10 +282,38 @@ class OpenAiSseFormatterTest extends TestCase
 
     // ── Custom model and ID ──
 
+    public function testModelCapturedFromStartedEvent(): void
+    {
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
+
+        $onEvent('started', ['agent' => 'Test', 'model' => 'gpt-4o']);
+        $buf->value = '';
+        $onEvent('text_delta', ['content' => 'Hi']);
+
+        $chunks = $this->parseSse($buf->value);
+        $data = json_decode($chunks[0]['data'], true);
+        $this->assertSame('gpt-4o', $data['model']);
+    }
+
+    public function testExplicitModelOverridesStartedEvent(): void
+    {
+        [$writer, $buf] = $this->createWriter(model: 'claude-3');
+        $onEvent = $writer->asOnEvent();
+
+        $onEvent('started', ['agent' => 'Test', 'model' => 'gpt-4o']);
+        $buf->value = '';
+        $onEvent('text_delta', ['content' => 'Hi']);
+
+        $chunks = $this->parseSse($buf->value);
+        $data = json_decode($chunks[0]['data'], true);
+        $this->assertSame('claude-3', $data['model']);
+    }
+
     public function testCustomModelNameIsIncludedInChunks(): void
     {
-        [$formatter, $buf] = $this->createFormatter(model: 'gpt-4o');
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter(model: 'gpt-4o');
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
 
         $chunks = $this->parseSse($buf->value);
@@ -259,8 +323,8 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testCustomIdIsUsedWhenProvided(): void
     {
-        [$formatter, $buf] = $this->createFormatter(id: 'chatcmpl-custom');
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter(id: 'chatcmpl-custom');
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
 
         $chunks = $this->parseSse($buf->value);
@@ -272,8 +336,8 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testAsOnChunkEmitsRoleThenContent(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onChunk = $formatter->asOnChunk();
+        [$writer, $buf] = $this->createWriter();
+        $onChunk = $writer->asOnChunk();
 
         $onChunk(['content' => 'World']);
 
@@ -291,11 +355,11 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testAsOnChunkWithFinishProducesCompleteSequence(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onChunk = $formatter->asOnChunk();
+        [$writer, $buf] = $this->createWriter();
+        $onChunk = $writer->asOnChunk();
 
         $onChunk(['content' => 'Hi']);
-        $formatter->finish(['prompt_tokens' => 20, 'completion_tokens' => 10]);
+        $writer->finish(['prompt_tokens' => 20, 'completion_tokens' => 10]);
 
         $chunks = $this->parseSse($buf->value);
         // role + content + finish + done
@@ -315,12 +379,12 @@ class OpenAiSseFormatterTest extends TestCase
 
     public function testFinishWithExplicitFinishReason(): void
     {
-        [$formatter, $buf] = $this->createFormatter();
-        $onEvent = $formatter->asOnEvent();
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
         $onEvent('started', ['agent' => 'Test']);
         $buf->value = '';
 
-        $formatter->finish([], 'tool_calls');
+        $writer->finish([], 'tool_calls');
 
         $chunks = $this->parseSse($buf->value);
         $data = json_decode($chunks[0]['data'], true);

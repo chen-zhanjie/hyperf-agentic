@@ -14,10 +14,12 @@ Layer 1: Contract (Interface Layer)
 Layer 2: Subsystems
     │   ToolRegistry, GuardrailRunner, ToolGuardrailRunner,
     │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline,
-    │   ToolDispatcher, LlmAdapter (OpenAiAdapter, AnthropicAdapter)
+    │   ToolDispatcher, TurnExecutor,
+    │   LlmAdapter (OpenAiAdapter, AnthropicAdapter),
+    │   Stream (SseWriter)
     │
 Layer 3: Agent Core
-    │   AgentRunner, ToolDispatcher, LoopState,
+    │   AgentRunner, Agent (DTO), ToolDispatcher, LoopState,
     │   AgentRunContext, AgentResult
     │
 Layer 4: Facade
@@ -221,7 +223,11 @@ src/
 ├── LlmAdapter/        # LLM protocol adapters
 │   ├── OpenAiAdapter.php    # OpenAI /v1/chat/completions
 │   └── AnthropicAdapter.php # Anthropic /v1/messages
+├── Stream/            # Streaming transport adapters
+│   └── SseWriter.php        # OpenAI-compatible SSE writer
 ├── AgentRunner.php    # Layer 3: Agent core
+├── TurnExecutor.php   # Layer 3: Single turn execution (unified sync/stream)
+├── Agent.php          # Agent DTO (config as data)
 ├── ToolDispatcher.php # Layer 3: Tool dispatch chain (guardrails → permissions → execution)
 ├── LoopState.php      # Per-request mutable loop accumulator
 ├── AgentRunContext.php # Per-request immutable context

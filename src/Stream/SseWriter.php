@@ -1,26 +1,23 @@
 <?php
 declare(strict_types=1);
 
-namespace ChenZhanjie\Agentic\Stream\Formatter;
-
-use ChenZhanjie\Agentic\Contract\StreamFormatterInterface;
+namespace ChenZhanjie\Agentic\Stream;
 
 /**
- * Formats SDK streaming events into OpenAI-compatible SSE output.
+ * Writes OpenAI-compatible SSE chunks to a write callback.
  *
- * Usage with runStream():
- *   $formatter = new OpenAiSseFormatter(fn(string $line) => echo $line);
- *   $result = $agentic->runStream('agent', $messages, $formatter->asOnEvent());
+ * Thin transport adapter: subscribes to internal agent events
+ * and converts them to the standard SSE wire format for HTTP responses.
  *
- * Usage with chatStream():
- *   $formatter = new OpenAiSseFormatter(fn(string $line) => echo $line);
- *   $result = $agentic->chatStream($messages, $formatter->asOnChunk());
- *   $formatter->finish($result['usage'] ?? []);
+ * Usage:
+ *   $sse = new SseWriter(fn(string $line) => $eventStream->write($line), model: 'gpt-4o');
+ *   $result = $agentic->runStream('agent', $messages, $sse->asOnEvent());
  */
-class OpenAiSseFormatter implements StreamFormatterInterface
+class SseWriter
 {
     private readonly string $id;
     private readonly int $created;
+    private string $model;
     private bool $roleSent = false;
     private bool $doneSent = false;
     private int $toolCallIndex = 0;
@@ -28,19 +25,25 @@ class OpenAiSseFormatter implements StreamFormatterInterface
     public function __construct(
         private readonly \Closure $write,
         string $id = '',
-        private readonly string $model = '',
+        string $model = '',
     ) {
         $this->id = $id !== '' ? $id : uniqid('chatcmpl-');
         $this->created = time();
+        $this->model = $model;
     }
 
+    /**
+     * Returns a callable compatible with AgentRunner's $onEvent callback.
+     * Converts agent lifecycle events into SSE chunks.
+     */
     public function asOnEvent(): callable
     {
         return function (string $type, array $payload): void {
             match ($type) {
-                'started' => $this->emitRole(),
-                'text_delta' => $this->emitContent($payload['content'] ?? ''),
-                'tool_call' => $this->emitToolCall($payload),
+                'started' => $this->handleStarted($payload),
+                'text_delta' => $this->writeContent($payload['content'] ?? ''),
+                'reasoning_delta' => $this->writeReasoning($payload['content'] ?? ''),
+                'tool_call' => $this->writeToolCall($payload),
                 'complete' => $this->finish([
                     'prompt_tokens' => $payload['prompt_tokens'] ?? 0,
                     'completion_tokens' => $payload['completion_tokens'] ?? 0,
@@ -52,6 +55,10 @@ class OpenAiSseFormatter implements StreamFormatterInterface
         };
     }
 
+    /**
+     * Returns a callable compatible with LlmClient's $onChunk callback.
+     * Auto-emits role delta on first chunk, then content deltas.
+     */
     public function asOnChunk(): callable
     {
         return function (array $chunk): void {
@@ -63,6 +70,9 @@ class OpenAiSseFormatter implements StreamFormatterInterface
         };
     }
 
+    /**
+     * Emit the finish chunk with usage and [DONE] sentinel.
+     */
     public function finish(array $usage = [], string $finishReason = 'stop'): void
     {
         $this->ensureRoleSent();
@@ -93,6 +103,9 @@ class OpenAiSseFormatter implements StreamFormatterInterface
         $this->done();
     }
 
+    /**
+     * Emit the [DONE] sentinel. Idempotent.
+     */
     public function done(): void
     {
         if ($this->doneSent) {
@@ -102,7 +115,16 @@ class OpenAiSseFormatter implements StreamFormatterInterface
         $this->doneSent = true;
     }
 
-    private function emitRole(): void
+    private function handleStarted(array $payload): void
+    {
+        // Capture model from agent config if not explicitly provided
+        if ($this->model === '' && isset($payload['model']) && $payload['model'] !== '') {
+            $this->model = $payload['model'];
+        }
+        $this->writeRole();
+    }
+
+    private function writeRole(): void
     {
         if ($this->roleSent) {
             return;
@@ -111,13 +133,19 @@ class OpenAiSseFormatter implements StreamFormatterInterface
         $this->roleSent = true;
     }
 
-    private function emitContent(string $content): void
+    private function writeContent(string $content): void
     {
         $this->ensureRoleSent();
         $this->writeChunk(['content' => $content]);
     }
 
-    private function emitToolCall(array $payload): void
+    private function writeReasoning(string $content): void
+    {
+        $this->ensureRoleSent();
+        $this->writeChunk(['reasoning_content' => $content]);
+    }
+
+    private function writeToolCall(array $payload): void
     {
         $this->ensureRoleSent();
 
@@ -141,7 +169,7 @@ class OpenAiSseFormatter implements StreamFormatterInterface
     private function ensureRoleSent(): void
     {
         if (!$this->roleSent) {
-            $this->emitRole();
+            $this->writeRole();
         }
     }
 

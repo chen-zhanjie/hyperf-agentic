@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic;
 
+use ChenZhanjie\Agentic\Contract\LlmAdapterInterface;
 use ChenZhanjie\Agentic\LlmAdapter\AnthropicAdapter;
 use ChenZhanjie\Agentic\LlmAdapter\OpenAiAdapter;
 use Psr\Log\LoggerInterface;
@@ -18,7 +19,8 @@ use Psr\Log\NullLogger;
  * Each provider config declares its protocol via the 'protocol' key.
  * If omitted, defaults to 'openai' for backward compatibility.
  *
- * Custom adapters can still be injected via the $adapterFactory parameter.
+ * Custom adapters can be injected via the $adapterFactory parameter,
+ * or by pre-building LlmAdapterInterface instances.
  */
 class LlmClient
 {
@@ -127,27 +129,21 @@ class LlmClient
      */
     private function callBuiltInAdapter(string $provider, array $config, array $messages, array $options): array
     {
-        $protocol = $config['protocol'] ?? 'openai';
-        $baseUrl = $config['base_url'] ?? $config['url'] ?? '';
-        $apiKey = $config['api_key'] ?? '';
-
-        if ($baseUrl === '' || $apiKey === '') {
-            throw new \RuntimeException(
-                "Built-in adapter requires 'base_url' and 'api_key' in provider config for [{$provider}]. "
-                . "Alternatively, provide an adapterFactory callable."
-            );
-        }
-
-        return match ($protocol) {
-            'anthropic' => (new AnthropicAdapter($apiKey, $baseUrl))->chat($messages, $options),
-            default => (new OpenAiAdapter($apiKey, $baseUrl))->chat($messages, $options),
-        };
+        return $this->createAdapter($provider, $config)->chat($messages, $options);
     }
 
     /**
      * Dispatch streaming request to the correct built-in adapter.
      */
     private function callBuiltInAdapterStream(string $provider, array $config, array $messages, array $options, callable $onChunk): array
+    {
+        return $this->createAdapter($provider, $config)->chatStream($messages, $options, $onChunk);
+    }
+
+    /**
+     * Create a protocol adapter for the given provider config.
+     */
+    private function createAdapter(string $provider, array $config): LlmAdapterInterface
     {
         $protocol = $config['protocol'] ?? 'openai';
         $baseUrl = $config['base_url'] ?? $config['url'] ?? '';
@@ -161,8 +157,8 @@ class LlmClient
         }
 
         return match ($protocol) {
-            'anthropic' => (new AnthropicAdapter($apiKey, $baseUrl))->chatStream($messages, $options, $onChunk),
-            default => (new OpenAiAdapter($apiKey, $baseUrl))->chatStream($messages, $options, $onChunk),
+            'anthropic' => new AnthropicAdapter($apiKey, $baseUrl),
+            default => new OpenAiAdapter($apiKey, $baseUrl),
         };
     }
 

@@ -13,8 +13,9 @@ use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\Skill\SkillRegistry;
 
 /**
- * Agent Runner — conversation loop + tool dispatch chain + guardrails + middleware.
+ * Agent Runner — thin orchestrator for the agent conversation loop.
  *
+ * Delegates turn execution to TurnExecutor and tool dispatch to ToolDispatcher.
  * Layer 3 of the 5-layer architecture.
  */
 class AgentRunner
@@ -79,7 +80,6 @@ class AgentRunner
 
     /**
      * Resume a suspended agent session.
-     * Restores state from SessionStore and continues the conversation loop.
      *
      * @param array  $state     Suspended state (messages, remaining_iterations, agent_config, agent_name)
      * @param string $sessionId Session ID
@@ -88,7 +88,6 @@ class AgentRunner
     {
         $startTime = hrtime(true);
 
-        // Validate required state fields
         $messages = $state['messages'] ?? [];
         if (empty($messages) || !is_array($messages)) {
             throw new \InvalidArgumentException('Invalid resume state: messages must be a non-empty array');
@@ -102,7 +101,6 @@ class AgentRunner
         $agentConfig = $state['agent_config'] ?? [];
         $agentName = $state['agent_name'] ?? 'Assistant';
 
-        // Setup
         $budget = new IterationBudget(maxTotal: $remainingIterations);
         $costBudget = new CostBudget(maxTotalTokens: (int) ($agentConfig['max_cost_tokens'] ?? 0) ?: PHP_INT_MAX);
 
@@ -148,15 +146,14 @@ class AgentRunner
             asyncGuardrailTimeout: 5000,
         );
 
-        $result = $this->runLoop(
-            $fullMessages, $systemMessage, $toolSchemas,
-            [], null, $loop, $context, null,
-        );
+        $executor = $this->createTurnExecutor();
+
+        $result = $this->runLoop($executor, $fullMessages, $systemMessage, $toolSchemas, [], null, $loop, $context, null, false);
 
         if ($result === null && $budget->consumeGrace() && !$costBudget->isExceeded()) {
-            $result = $this->runGraceTurn(
+            $result = $executor->execute(
                 $fullMessages, $systemMessage, $toolSchemas,
-                [], null, $loop, $context, null,
+                [], null, $loop, $context, false, true,
             );
         }
 
@@ -168,24 +165,7 @@ class AgentRunner
     }
 
     /**
-     * Execute the agent conversation loop.
-     *
-     * @param array $messages Conversation history. Each message is an array with:
-     *   - role:    string       'user' | 'assistant' | 'tool'
-     *   - content: string|null  Text content (null when tool_calls present)
-     *   - tool_calls: array     (assistant only) Array of tool call objects
-     *   - tool_call_id: string  (tool only) ID of the tool call being answered
-     * @param array $agentConfig Agent configuration:
-     *   - persona:          Persona|string|null  Persona object, markdown string, or null for default
-     *   - tools:            string[]             Tool name whitelist (empty = all tools)
-     *   - skills:           string[]             Skill name whitelist (empty = all skills)
-     *   - system_prompt:    string               Additional system prompt text
-     *   - max_iterations:   int                  Max iteration rounds (default: 15)
-     *   - max_cost_tokens:  int                  Max total token budget (default: unlimited)
-     *   - scene:            string               Runtime scene: 'http', 'cli', etc.
-     *   - guardrails:       string[]             Guardrail name whitelist (empty = all guardrails)
-     * @param array         $options     Runtime overrides (runtime_context, etc.)
-     * @param callable|null $onEvent     Event callback: callable(string $type, array $payload): void
+     * Execute the agent conversation loop (non-streaming).
      */
     public function run(
         array $messages,
@@ -208,6 +188,19 @@ class AgentRunner
     ): AgentResult {
         $ctx = $this->buildRunContext($messages, $agentConfig, $options);
         return $this->executeRun($ctx, $onEvent, stream: true);
+    }
+
+    /**
+     * Create a TurnExecutor instance.
+     */
+    private function createTurnExecutor(): TurnExecutor
+    {
+        return new TurnExecutor(
+            llmClient: $this->llmClient,
+            promptBuilder: $this->promptBuilder,
+            middleware: $this->middleware,
+            toolDispatcher: $this->toolDispatcher(),
+        );
     }
 
     /**
@@ -288,6 +281,7 @@ class AgentRunner
             'fullMessages' => $fullMessages,
             'options' => $options,
             'persona' => $setup['persona'],
+            'model' => $options['model'] ?? $agentConfig['model'] ?? '',
         ];
     }
 
@@ -319,19 +313,20 @@ class AgentRunner
 
         $this->emitEvent($onEvent, AgentEventType::STARTED, [
             'agent' => $ctx['persona']->name ?? 'Assistant',
+            'model' => $ctx['model'] ?? '',
         ]);
 
+        $executor = $this->createTurnExecutor();
+
         $result = $this->runLoop(
-            $fullMessages, $systemMessage, $toolSchemas,
-            $options, $onEvent, $loop, $context, $inputGuardContext,
-            $stream,
+            $executor, $fullMessages, $systemMessage, $toolSchemas,
+            $options, $onEvent, $loop, $context, $inputGuardContext, $stream,
         );
 
         if ($result === null && $budget->consumeGrace() && !$costBudget->isExceeded()) {
-            $graceMethod = $stream ? 'runStreamGraceTurn' : 'runGraceTurn';
-            $result = $this->$graceMethod(
+            $result = $executor->execute(
                 $fullMessages, $systemMessage, $toolSchemas,
-                $options, $onEvent, $loop, $context, $inputGuardContext,
+                $options, $onEvent, $loop, $context, $stream, true,
             );
         }
 
@@ -351,6 +346,7 @@ class AgentRunner
      * Returns AgentResult on success, or null when budget is exhausted.
      */
     private function runLoop(
+        TurnExecutor $executor,
         array &$fullMessages,
         string $systemMessage,
         array $toolSchemas,
@@ -376,10 +372,9 @@ class AgentRunner
 
             ++$loop->iterations;
 
-            $turnMethod = $stream ? 'executeStreamTurn' : 'executeTurn';
-            $turnResult = $this->$turnMethod(
+            $turnResult = $executor->execute(
                 $fullMessages, $systemMessage, $toolSchemas,
-                $options, $onEvent, $loop, $context,
+                $options, $onEvent, $loop, $context, $stream,
             );
 
             if ($turnResult !== null) {
@@ -392,486 +387,7 @@ class AgentRunner
     }
 
     /**
-     * Execute one grace turn after budget exhaustion.
-     */
-    private function runGraceTurn(
-        array &$fullMessages,
-        string $systemMessage,
-        array $toolSchemas,
-        array $options,
-        ?callable $onEvent,
-        LoopState $loop,
-        AgentRunContext $context,
-        ?AsyncGuardrailContext $inputGuardContext = null,
-    ): ?AgentResult {
-        ++$loop->iterations;
-
-        // Build ephemeral prompt with grace message (budget.isExhausted() + grace consumed)
-        $ephemeral = $this->promptBuilder->buildEphemeralPrompt(
-            runtimeContext: $options['runtime_context'] ?? [],
-            budget: $loop->budget,
-        );
-
-        $fullMessages[0]['content'] = $systemMessage . "\n\n---\n\n" . $ephemeral;
-
-        // Middleware — before LLM call
-        $llmOptions = $this->middleware->beforeLlmCall($fullMessages, [
-            'tools' => $toolSchemas,
-        ]);
-
-        $this->emitEvent($onEvent, AgentEventType::THINKING, [
-            'iteration' => $loop->iterations,
-        ]);
-
-        $response = $this->llmClient->chat($fullMessages, $llmOptions);
-        $content = $response['content'];
-        $toolCalls = $response['tool_calls'] ?? [];
-        $usage = $response['usage'] ?? [];
-
-        $loop->recordUsage(
-            (int) ($usage['prompt_tokens'] ?? 0),
-            (int) ($usage['completion_tokens'] ?? 0),
-        );
-
-        $this->middleware->afterLlmCall($response, $usage);
-
-        // No tool calls → text response → clean finish via grace
-        if (empty($toolCalls)) {
-            $textContent = is_string($content) ? $content : (string) ($content ?? '');
-
-            $outputGuardContext = $context->guardrails->checkOutputAsync($textContent);
-            if ($outputGuardContext->isBlocked()) {
-                $blockResult = $outputGuardContext->getBlockResult();
-                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
-                    'type' => 'output',
-                    'name' => $outputGuardContext->getBlockName() ?? 'output_guard',
-                    'reason' => $blockResult->reason,
-                ]);
-                return AgentResult::guardrailBlocked('output', $blockResult->reason, $loop->elapsedMs());
-            }
-
-            $result = AgentResult::complete(
-                content: $textContent,
-                iterations: $loop->iterations,
-                elapsedMs: $loop->elapsedMs(),
-                promptTokens: $loop->totalPromptTokens,
-                completionTokens: $loop->totalCompletionTokens,
-                toolCalls: $loop->totalToolCalls,
-            );
-
-            $result = $this->middleware->afterLoop($result);
-
-            $this->emitEvent($onEvent, AgentEventType::COMPLETE, [
-                'iterations' => $loop->iterations,
-                'elapsed_ms' => $result->elapsedMs,
-                'prompt_tokens' => $loop->totalPromptTokens,
-                'completion_tokens' => $loop->totalCompletionTokens,
-            ]);
-
-            // Wait for async guardrails
-            if ($outputGuardContext->hasAsyncGuardrails() && !$outputGuardContext->allCompleted()) {
-                $outputGuardContext->await(5000);
-            }
-
-            if ($outputGuardContext->isBlocked()) {
-                $blockResult = $outputGuardContext->getBlockResult();
-                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_RECALLED, [
-                    'type' => 'output',
-                    'name' => $outputGuardContext->getBlockName() ?? 'output_async',
-                    'reason' => $blockResult->reason,
-                ]);
-                return AgentResult::recalled(
-                    content: $textContent,
-                    reason: $blockResult->reason,
-                    elapsedMs: $loop->elapsedMs(),
-                );
-            }
-
-            return $result;
-        }
-
-        // Grace turn still called tools — process them but don't loop further
-        $loop->recordToolCalls(count($toolCalls));
-
-        $fullMessages[] = [
-            'role' => 'assistant',
-            'content' => $content,
-            'tool_calls' => $toolCalls,
-        ];
-
-        $this->toolDispatcher()->processToolCalls($toolCalls, $fullMessages, $onEvent, 'grace', false, $context);
-
-        return null; // Grace turn didn't produce text → truly exhausted
-    }
-
-    /**
-     * Execute a single turn in the loop.
-     * Returns AgentResult if completed (text response), null if tool calls were processed.
-     */
-    private function executeTurn(
-        array &$fullMessages,
-        string $systemMessage,
-        array $toolSchemas,
-        array $options,
-        ?callable $onEvent,
-        LoopState $loop,
-        AgentRunContext $context,
-    ): ?AgentResult {
-        // Build ephemeral prompt for this turn
-        $ephemeral = $this->promptBuilder->buildEphemeralPrompt(
-            runtimeContext: $options['runtime_context'] ?? [],
-            budget: $loop->budget,
-            costBudget: $loop->costBudget,
-        );
-
-        // Update system message with ephemeral layer
-        $fullMessages[0]['content'] = $systemMessage . "\n\n---\n\n" . $ephemeral;
-
-        // Middleware — before LLM call
-        $llmOptions = $this->middleware->beforeLlmCall($fullMessages, [
-            'tools' => $toolSchemas,
-        ]);
-
-        // Emit thinking event
-        $this->emitEvent($onEvent, AgentEventType::THINKING, [
-            'iteration' => $loop->iterations,
-        ]);
-
-        // Call LLM
-        $response = $this->llmClient->chat($fullMessages, $llmOptions);
-        $content = $response['content'];
-        $toolCalls = $response['tool_calls'] ?? [];
-        $usage = $response['usage'] ?? [];
-
-        // Track token usage
-        $loop->recordUsage(
-            (int) ($usage['prompt_tokens'] ?? 0),
-            (int) ($usage['completion_tokens'] ?? 0),
-        );
-
-        // Middleware — after LLM call
-        $this->middleware->afterLlmCall($response, $usage);
-
-        // No tool calls → text response → done
-        if (empty($toolCalls)) {
-            $textContent = is_string($content) ? $content : (string) ($content ?? '');
-
-            // Phase 7: Output guardrail check (async-aware)
-            $outputGuardContext = $context->guardrails->checkOutputAsync($textContent);
-
-            // Sync guardrail blocked immediately (before output reaches client)
-            if ($outputGuardContext->isBlocked() && !$outputGuardContext->hasAsyncGuardrails()) {
-                $blockResult = $outputGuardContext->getBlockResult();
-                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
-                    'type' => 'output',
-                    'name' => $outputGuardContext->getBlockName() ?? 'output_guard',
-                    'reason' => $blockResult->reason,
-                ]);
-                return AgentResult::guardrailBlocked('output', $blockResult->reason, $loop->elapsedMs());
-            }
-
-            // Middleware — after loop
-            $result = AgentResult::complete(
-                content: $textContent,
-                iterations: $loop->iterations,
-                elapsedMs: $loop->elapsedMs(),
-                promptTokens: $loop->totalPromptTokens,
-                completionTokens: $loop->totalCompletionTokens,
-                toolCalls: $loop->totalToolCalls,
-            );
-
-            $result = $this->middleware->afterLoop($result);
-
-            $this->emitEvent($onEvent, AgentEventType::COMPLETE, [
-                'iterations' => $loop->iterations,
-                'elapsed_ms' => $result->elapsedMs,
-                'prompt_tokens' => $loop->totalPromptTokens,
-                'completion_tokens' => $loop->totalCompletionTokens,
-            ]);
-
-            // Wait for async guardrails to complete
-            if ($outputGuardContext->hasAsyncGuardrails() && !$outputGuardContext->allCompleted()) {
-                $outputGuardContext->await($loop->asyncGuardrailTimeout);
-            }
-
-            // Async guardrail blocked after output → recall
-            if ($outputGuardContext->isBlocked()) {
-                $blockResult = $outputGuardContext->getBlockResult();
-                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_RECALLED, [
-                    'type' => 'output',
-                    'name' => $outputGuardContext->getBlockName() ?? 'output_async',
-                    'reason' => $blockResult->reason,
-                ]);
-                return AgentResult::recalled(
-                    content: $textContent,
-                    reason: $blockResult->reason,
-                    elapsedMs: $loop->elapsedMs(),
-                );
-            }
-
-            return $result;
-        }
-
-        // Tool calls — process each one
-        $loop->recordToolCalls(count($toolCalls));
-
-        // Append assistant message with tool_calls
-        $fullMessages[] = [
-            'role' => 'assistant',
-            'content' => $content,
-            'tool_calls' => $toolCalls,
-        ];
-
-        $this->toolDispatcher()->processToolCalls($toolCalls, $fullMessages, $onEvent, (string) $loop->iterations, true, $context);
-
-        return null; // Tool calls processed — continue loop
-    }
-
-    /**
-     * Execute a single streaming turn in the loop.
-     * Returns AgentResult if completed (text response), null if tool calls were processed.
-     */
-    private function executeStreamTurn(
-        array &$fullMessages,
-        string $systemMessage,
-        array $toolSchemas,
-        array $options,
-        ?callable $onEvent,
-        LoopState $loop,
-        AgentRunContext $context,
-    ): ?AgentResult {
-        $ephemeral = $this->promptBuilder->buildEphemeralPrompt(
-            runtimeContext: $options['runtime_context'] ?? [],
-            budget: $loop->budget,
-            costBudget: $loop->costBudget,
-        );
-
-        $fullMessages[0]['content'] = $systemMessage . "\n\n---\n\n" . $ephemeral;
-
-        $llmOptions = $this->middleware->beforeLlmCall($fullMessages, [
-            'tools' => $toolSchemas,
-        ]);
-
-        $this->emitEvent($onEvent, AgentEventType::THINKING, [
-            'iteration' => $loop->iterations,
-        ]);
-
-        $textBuffer = '';
-        $reasoningBuffer = '';
-
-        $response = $this->llmClient->chatStream($fullMessages, $llmOptions, function (array $chunk) use ($onEvent, &$textBuffer, &$reasoningBuffer): void {
-            if (isset($chunk['content']) && $chunk['content'] !== '') {
-                $textBuffer .= $chunk['content'];
-                $this->emitEvent($onEvent, AgentEventType::TEXT_DELTA, ['content' => $chunk['content']]);
-            }
-            if (isset($chunk['reasoning_content']) && $chunk['reasoning_content'] !== '') {
-                $reasoningBuffer .= $chunk['reasoning_content'];
-            }
-        });
-
-        $content = is_string($response['content'] ?? null) ? $response['content'] : (string) ($response['content'] ?? '');
-        $toolCalls = $response['tool_calls'] ?? [];
-        $usage = $response['usage'] ?? [];
-
-        $loop->recordUsage(
-            (int) ($usage['prompt_tokens'] ?? 0),
-            (int) ($usage['completion_tokens'] ?? 0),
-        );
-
-        $this->middleware->afterLlmCall($response, $usage);
-
-        if (empty($toolCalls)) {
-            $textContent = is_string($content) ? $content : (string) ($content ?? '');
-
-            $outputGuardContext = $context->guardrails->checkOutputAsync($textContent);
-
-            if ($outputGuardContext->isBlocked() && !$outputGuardContext->hasAsyncGuardrails()) {
-                $blockResult = $outputGuardContext->getBlockResult();
-                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
-                    'type' => 'output',
-                    'name' => $outputGuardContext->getBlockName() ?? 'output_guard',
-                    'reason' => $blockResult->reason,
-                ]);
-                return AgentResult::guardrailBlocked('output', $blockResult->reason, $loop->elapsedMs());
-            }
-
-            $result = AgentResult::complete(
-                content: $textContent,
-                reasoningContent: $reasoningBuffer ?: ($response['reasoning_content'] ?? null),
-                iterations: $loop->iterations,
-                elapsedMs: $loop->elapsedMs(),
-                promptTokens: $loop->totalPromptTokens,
-                completionTokens: $loop->totalCompletionTokens,
-                toolCalls: $loop->totalToolCalls,
-            );
-
-            $result = $this->middleware->afterLoop($result);
-
-            $this->emitEvent($onEvent, AgentEventType::COMPLETE, [
-                'iterations' => $loop->iterations,
-                'elapsed_ms' => $result->elapsedMs,
-                'prompt_tokens' => $loop->totalPromptTokens,
-                'completion_tokens' => $loop->totalCompletionTokens,
-            ]);
-
-            if ($outputGuardContext->hasAsyncGuardrails() && !$outputGuardContext->allCompleted()) {
-                $outputGuardContext->await($loop->asyncGuardrailTimeout);
-            }
-
-            if ($outputGuardContext->isBlocked()) {
-                $blockResult = $outputGuardContext->getBlockResult();
-                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_RECALLED, [
-                    'type' => 'output',
-                    'name' => $outputGuardContext->getBlockName() ?? 'output_async',
-                    'reason' => $blockResult->reason,
-                ]);
-                return AgentResult::recalled(
-                    content: $textContent,
-                    reason: $blockResult->reason,
-                    elapsedMs: $loop->elapsedMs(),
-                );
-            }
-
-            return $result;
-        }
-
-        $loop->recordToolCalls(count($toolCalls));
-
-        $fullMessages[] = [
-            'role' => 'assistant',
-            'content' => $content,
-            'tool_calls' => $toolCalls,
-        ];
-
-        $this->toolDispatcher()->processToolCalls($toolCalls, $fullMessages, $onEvent, (string) $loop->iterations, true, $context);
-
-        return null;
-    }
-
-    /**
-     * Execute a streaming grace turn after budget exhaustion.
-     */
-    private function runStreamGraceTurn(
-        array &$fullMessages,
-        string $systemMessage,
-        array $toolSchemas,
-        array $options,
-        ?callable $onEvent,
-        LoopState $loop,
-        AgentRunContext $context,
-        ?AsyncGuardrailContext $inputGuardContext = null,
-    ): ?AgentResult {
-        ++$loop->iterations;
-
-        $ephemeral = $this->promptBuilder->buildEphemeralPrompt(
-            runtimeContext: $options['runtime_context'] ?? [],
-            budget: $loop->budget,
-        );
-
-        $fullMessages[0]['content'] = $systemMessage . "\n\n---\n\n" . $ephemeral;
-
-        $llmOptions = $this->middleware->beforeLlmCall($fullMessages, [
-            'tools' => $toolSchemas,
-        ]);
-
-        $this->emitEvent($onEvent, AgentEventType::THINKING, [
-            'iteration' => $loop->iterations,
-        ]);
-
-        $textBuffer = '';
-        $reasoningBuffer = '';
-
-        $response = $this->llmClient->chatStream($fullMessages, $llmOptions, function (array $chunk) use ($onEvent, &$textBuffer, &$reasoningBuffer): void {
-            if (isset($chunk['content']) && $chunk['content'] !== '') {
-                $textBuffer .= $chunk['content'];
-                $this->emitEvent($onEvent, AgentEventType::TEXT_DELTA, ['content' => $chunk['content']]);
-            }
-            if (isset($chunk['reasoning_content']) && $chunk['reasoning_content'] !== '') {
-                $reasoningBuffer .= $chunk['reasoning_content'];
-            }
-        });
-
-        $content = $response['content'];
-        $toolCalls = $response['tool_calls'] ?? [];
-        $usage = $response['usage'] ?? [];
-
-        $loop->recordUsage(
-            (int) ($usage['prompt_tokens'] ?? 0),
-            (int) ($usage['completion_tokens'] ?? 0),
-        );
-
-        $this->middleware->afterLlmCall($response, $usage);
-
-        if (empty($toolCalls)) {
-            $textContent = is_string($content) ? $content : (string) ($content ?? '');
-
-            $outputGuardContext = $context->guardrails->checkOutputAsync($textContent);
-            if ($outputGuardContext->isBlocked()) {
-                $blockResult = $outputGuardContext->getBlockResult();
-                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_BLOCKED, [
-                    'type' => 'output',
-                    'name' => $outputGuardContext->getBlockName() ?? 'output_guard',
-                    'reason' => $blockResult->reason,
-                ]);
-                return AgentResult::guardrailBlocked('output', $blockResult->reason, $loop->elapsedMs());
-            }
-
-            $result = AgentResult::complete(
-                content: $textContent,
-                reasoningContent: $reasoningBuffer ?: ($response['reasoning_content'] ?? null),
-                iterations: $loop->iterations,
-                elapsedMs: $loop->elapsedMs(),
-                promptTokens: $loop->totalPromptTokens,
-                completionTokens: $loop->totalCompletionTokens,
-                toolCalls: $loop->totalToolCalls,
-            );
-
-            $result = $this->middleware->afterLoop($result);
-
-            $this->emitEvent($onEvent, AgentEventType::COMPLETE, [
-                'iterations' => $loop->iterations,
-                'elapsed_ms' => $result->elapsedMs,
-                'prompt_tokens' => $loop->totalPromptTokens,
-                'completion_tokens' => $loop->totalCompletionTokens,
-            ]);
-
-            if ($outputGuardContext->hasAsyncGuardrails() && !$outputGuardContext->allCompleted()) {
-                $outputGuardContext->await(5000);
-            }
-
-            if ($outputGuardContext->isBlocked()) {
-                $blockResult = $outputGuardContext->getBlockResult();
-                $this->emitEvent($onEvent, AgentEventType::GUARDRAIL_RECALLED, [
-                    'type' => 'output',
-                    'name' => $outputGuardContext->getBlockName() ?? 'output_async',
-                    'reason' => $blockResult->reason,
-                ]);
-                return AgentResult::recalled(
-                    content: $textContent,
-                    reason: $blockResult->reason,
-                    elapsedMs: $loop->elapsedMs(),
-                );
-            }
-
-            return $result;
-        }
-
-        $loop->recordToolCalls(count($toolCalls));
-
-        $fullMessages[] = [
-            'role' => 'assistant',
-            'content' => $content,
-            'tool_calls' => $toolCalls,
-        ];
-
-        $this->toolDispatcher()->processToolCalls($toolCalls, $fullMessages, $onEvent, 'grace', false, $context);
-
-        return null;
-    }
-
-    /**
      * Shared setup: resolve persona, tools, guardrails, permissions from agent config.
-     * Used by both run() and resume() to eliminate duplication.
      *
      * @return array{persona:Persona,systemPrompt:string,scene:string,activeRegistry:ToolRegistry,activeGuardrails:GuardrailRunner,policy:ToolPermissionPolicyInterface,sessionId:?string,requestApprovalStore:?PermissionApprovalStoreInterface}
      */
@@ -987,7 +503,6 @@ class AgentRunner
             return Persona::fromMarkdown($persona);
         }
 
-        // Default persona
         return new Persona(
             name: 'Assistant',
             content: 'You are a helpful AI assistant.',
@@ -999,10 +514,8 @@ class AgentRunner
      */
     private function emitEvent(?callable $onEvent, AgentEventType $type, array $payload = []): void
     {
-        // Internal EventEmitter
         $this->emit($type, $payload);
 
-        // External callback
         if ($onEvent !== null) {
             $onEvent($type->value, $payload);
         }

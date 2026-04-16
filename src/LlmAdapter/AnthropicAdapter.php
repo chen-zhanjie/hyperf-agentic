@@ -9,12 +9,9 @@ namespace ChenZhanjie\Agentic\LlmAdapter;
  * Translates between the SDK's internal message format and the
  * Anthropic /v1/messages protocol.
  *
- * Key differences handled:
- * - System prompt: extracted from messages → top-level `system` parameter
- * - Tool results: SDK `{role: tool, tool_call_id, content}` → Anthropic `{role: user, content: [{type: tool_result}]}`
- * - Tool calls in response: Anthropic `tool_use` content blocks → SDK `tool_calls` array
+ * Stateless: all streaming state is local to each chatStream() call.
  */
-class AnthropicAdapter
+class AnthropicAdapter implements \ChenZhanjie\Agentic\Contract\LlmAdapterInterface
 {
     public function __construct(
         private readonly string $apiKey,
@@ -22,24 +19,12 @@ class AnthropicAdapter
         private readonly int $timeout = 60,
     ) {}
 
-    /**
-     * Send a messages request to the Anthropic API.
-     *
-     * @param array $messages SDK-format messages
-     * @param array $options  LLM options (model, tools, max_tokens, etc.)
-     * @return array Normalized response: ['content' => string, 'tool_calls' => array, 'usage' => array]
-     */
     public function chat(array $messages, array $options): array
     {
         $model = $options['model'] ?? 'claude-sonnet-4-20250514';
 
-        // Extract system messages from the message array
         [$systemPrompt, $cleanMessages] = $this->extractSystemPrompt($messages);
-
-        // Convert SDK messages to Anthropic format
         $anthropicMessages = $this->convertMessages($cleanMessages);
-
-        // Convert tools to Anthropic format
         $tools = $this->convertTools($options['tools'] ?? null);
 
         $body = array_filter([
@@ -55,14 +40,6 @@ class AnthropicAdapter
         return $this->normalizeResponse($response);
     }
 
-    /**
-     * Send a streaming messages request to the Anthropic API.
-     *
-     * @param array    $messages SDK-format messages
-     * @param array    $options  LLM options
-     * @param callable $onChunk  fn(array $chunk) => void
-     * @return array Normalized response (usage may be empty for streaming)
-     */
     public function chatStream(array $messages, array $options, callable $onChunk): array
     {
         $model = $options['model'] ?? 'claude-sonnet-4-20250514';
@@ -80,12 +57,46 @@ class AnthropicAdapter
             'stream' => true,
         ], fn(mixed $v): bool => $v !== null && $v !== '');
 
-        return $this->httpStream(rtrim($this->baseUrl, '/') . '/messages', $body, $onChunk);
+        // Streaming state is local — no instance property leakage between calls
+        $sseBuffer = '';
+        $streamState = [];
+
+        $ch = curl_init(rtrim($this->baseUrl, '/') . '/messages');
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/json',
+                'x-api-key: ' . $this->apiKey,
+                'anthropic-version: 2023-06-01',
+                'Accept: text/event-stream',
+            ],
+            CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE),
+            CURLOPT_TIMEOUT => $this->timeout,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_WRITEFUNCTION => function ($_, string $data) use ($onChunk, &$sseBuffer, &$streamState): int {
+                $this->processSseChunk($data, $onChunk, $sseBuffer, $streamState);
+                return strlen($data);
+            },
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($error) {
+            throw new \RuntimeException("HTTP request failed: {$error}");
+        }
+
+        if ($httpCode !== 200) {
+            throw new \RuntimeException("Anthropic API error (HTTP {$httpCode})");
+        }
+
+        return $this->buildStreamedResponse($streamState);
     }
 
     /**
      * Extract system messages from the SDK message array.
-     * Anthropic requires system prompt as a top-level parameter, not in messages.
      *
      * @return array{0: string|null, 1: array} [system prompt, remaining messages]
      */
@@ -106,19 +117,6 @@ class AnthropicAdapter
         return [$system, $remaining];
     }
 
-    /**
-     * Convert SDK-format messages to Anthropic-format messages.
-     *
-     * SDK format:
-     *   {role: "user", content: "..."}
-     *   {role: "assistant", content: "...", tool_calls: [...]}
-     *   {role: "tool", tool_call_id: "...", content: "..."}
-     *
-     * Anthropic format:
-     *   {role: "user", content: "..."}
-     *   {role: "assistant", content: [{type: "text", text: "..."}, {type: "tool_use", ...}]}
-     *   {role: "user", content: [{type: "tool_result", tool_use_id: "...", content: "..."}]}
-     */
     private function convertMessages(array $messages): array
     {
         $converted = [];
@@ -128,14 +126,12 @@ class AnthropicAdapter
             $role = $msg['role'] ?? '';
 
             if ($role === 'user') {
-                // Flush any pending tool results first
                 if (!empty($pendingToolResults)) {
                     $converted[] = ['role' => 'user', 'content' => $pendingToolResults];
                     $pendingToolResults = [];
                 }
                 $converted[] = ['role' => 'user', 'content' => $msg['content'] ?? ''];
             } elseif ($role === 'assistant') {
-                // Flush pending tool results
                 if (!empty($pendingToolResults)) {
                     $converted[] = ['role' => 'user', 'content' => $pendingToolResults];
                     $pendingToolResults = [];
@@ -163,7 +159,6 @@ class AnthropicAdapter
                     $converted[] = ['role' => 'assistant', 'content' => $content];
                 }
             } elseif ($role === 'tool') {
-                // Accumulate tool results — Anthropic sends them as a single user message
                 $pendingToolResults[] = [
                     'type' => 'tool_result',
                     'tool_use_id' => $msg['tool_call_id'] ?? '',
@@ -172,7 +167,6 @@ class AnthropicAdapter
             }
         }
 
-        // Flush any remaining tool results
         if (!empty($pendingToolResults)) {
             $converted[] = ['role' => 'user', 'content' => $pendingToolResults];
         }
@@ -180,12 +174,6 @@ class AnthropicAdapter
         return $converted;
     }
 
-    /**
-     * Convert SDK tool schemas (OpenAI function format) to Anthropic tool format.
-     *
-     * SDK: {type: "function", function: {name, description, parameters}}
-     * Anthropic: {name, description, input_schema}
-     */
     private function convertTools(?array $tools): ?array
     {
         if ($tools === null || empty($tools)) {
@@ -194,13 +182,11 @@ class AnthropicAdapter
 
         $converted = [];
         foreach ($tools as $tool) {
-            // Already in Anthropic format?
             if (isset($tool['name'], $tool['input_schema'])) {
                 $converted[] = $tool;
                 continue;
             }
 
-            // Convert from OpenAI format
             $func = $tool['function'] ?? $tool;
             $converted[] = array_filter([
                 'name' => $func['name'] ?? '',
@@ -212,13 +198,6 @@ class AnthropicAdapter
         return $converted;
     }
 
-    /**
-     * Normalize Anthropic response to SDK array format.
-     *
-     * Anthropic response:
-     *   content: [{type: "text", text: "..."}, {type: "tool_use", id, name, input}, ...]
-     *   usage: {input_tokens, output_tokens}
-     */
     private function normalizeResponse(array $data): array
     {
         $contentBlocks = $data['content'] ?? [];
@@ -304,57 +283,13 @@ class AnthropicAdapter
     }
 
     /**
-     * Execute a streaming HTTP POST and parse SSE chunks.
-     *
-     * @param callable $onChunk fn(array $chunk) => void
+     * Process an SSE chunk, updating local state and emitting to onChunk.
      */
-    private function httpStream(string $url, array $body, callable $onChunk): array
+    private function processSseChunk(string $raw, callable $onChunk, string &$sseBuffer, array &$streamState): void
     {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'x-api-key: ' . $this->apiKey,
-                'anthropic-version: 2023-06-01',
-                'Accept: text/event-stream',
-            ],
-            CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE),
-            CURLOPT_TIMEOUT => $this->timeout,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_WRITEFUNCTION => function ($_, string $data) use ($onChunk): int {
-                $this->processSseLine($data, $onChunk);
-                return strlen($data);
-            },
-        ]);
-
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        if ($error) {
-            throw new \RuntimeException("HTTP request failed: {$error}");
-        }
-
-        if ($httpCode !== 200) {
-            throw new \RuntimeException("Anthropic API error (HTTP {$httpCode})");
-        }
-
-        return $this->buildStreamedResponse();
-    }
-
-    /** @var string Accumulated SSE buffer across write callbacks */
-    private string $sseBuffer = '';
-
-    /** @var array<string, mixed> Accumulated streamed state */
-    private array $streamState = [];
-
-    private function processSseLine(string $raw, callable $onChunk): void
-    {
-        $this->sseBuffer .= $raw;
-        $lines = explode("\n", $this->sseBuffer);
-        $this->sseBuffer = array_pop($lines); // keep incomplete tail
+        $sseBuffer .= $raw;
+        $lines = explode("\n", $sseBuffer);
+        $sseBuffer = array_pop($lines);
 
         foreach ($lines as $line) {
             $line = trim($line);
@@ -373,6 +308,17 @@ class AnthropicAdapter
 
             $type = $data['type'] ?? '';
 
+            // message_start — capture initial usage
+            if ($type === 'message_start') {
+                $message = $data['message'] ?? [];
+                $usage = $message['usage'] ?? [];
+                $streamState['usage'] = [
+                    'prompt_tokens' => $usage['input_tokens'] ?? 0,
+                    'completion_tokens' => 0,
+                ];
+            }
+
+            // content_block_delta — text, thinking, tool arguments
             if ($type === 'content_block_delta') {
                 $delta = $data['delta'] ?? [];
                 $deltaType = $delta['type'] ?? '';
@@ -387,22 +333,23 @@ class AnthropicAdapter
 
                 if ($deltaType === 'input_json_delta' && isset($delta['partial_json'])) {
                     $index = $data['index'] ?? 0;
-                    if (!isset($this->streamState['tool_calls'][$index])) {
-                        $this->streamState['tool_calls'][$index] = [
+                    if (!isset($streamState['tool_calls'][$index])) {
+                        $streamState['tool_calls'][$index] = [
                             'id' => '',
                             'type' => 'function',
                             'function' => ['name' => '', 'arguments' => ''],
                         ];
                     }
-                    $this->streamState['tool_calls'][$index]['function']['arguments'] .= $delta['partial_json'];
+                    $streamState['tool_calls'][$index]['function']['arguments'] .= $delta['partial_json'];
                 }
             }
 
+            // content_block_start — tool_use blocks
             if ($type === 'content_block_start') {
                 $block = $data['content_block'] ?? [];
                 if (($block['type'] ?? '') === 'tool_use') {
                     $index = $data['index'] ?? 0;
-                    $this->streamState['tool_calls'][$index] = [
+                    $streamState['tool_calls'][$index] = [
                         'id' => $block['id'] ?? '',
                         'type' => 'function',
                         'function' => [
@@ -413,29 +360,40 @@ class AnthropicAdapter
                 }
             }
 
+            // message_delta — final usage and stop_reason
+            if ($type === 'message_delta') {
+                $delta = $data['delta'] ?? [];
+                if (!empty($delta['stop_reason'])) {
+                    $streamState['finish_reason'] = $delta['stop_reason'];
+                }
+                $usage = $data['usage'] ?? [];
+                if (isset($streamState['usage'])) {
+                    $streamState['usage']['completion_tokens'] = $usage['output_tokens'] ?? 0;
+                }
+            }
+
             if ($type === 'message_stop') {
-                $this->streamState['finish_reason'] = 'stop';
+                $streamState['finish_reason'] = $streamState['finish_reason'] ?? 'stop';
             }
         }
     }
 
-    private function buildStreamedResponse(): array
+    private function buildStreamedResponse(array $streamState): array
     {
         $result = [
             'content' => '',
-            'usage' => ['prompt_tokens' => 0, 'completion_tokens' => 0],
+            'usage' => $streamState['usage'] ?? ['prompt_tokens' => 0, 'completion_tokens' => 0],
         ];
 
-        if (!empty($this->streamState['tool_calls'])) {
-            // Ensure arguments are valid JSON strings
-            foreach ($this->streamState['tool_calls'] as $i => $tc) {
+        if (!empty($streamState['tool_calls'])) {
+            foreach ($streamState['tool_calls'] as $i => $tc) {
                 $args = $tc['function']['arguments'] ?? '';
                 json_decode($args);
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    $this->streamState['tool_calls'][$i]['function']['arguments'] = '{}';
+                    $streamState['tool_calls'][$i]['function']['arguments'] = '{}';
                 }
             }
-            $result['tool_calls'] = array_values($this->streamState['tool_calls']);
+            $result['tool_calls'] = array_values($streamState['tool_calls']);
         }
 
         return $result;

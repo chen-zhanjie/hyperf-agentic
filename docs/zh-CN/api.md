@@ -79,6 +79,7 @@ public function runStream(
 | `started` | Agent 循环开始 |
 | `thinking` | 即将调用 LLM |
 | `text_delta` | 新的文本 token 分片（`data['content']`） |
+| `reasoning_delta` | 推理/思考 token 分片（`data['content']`） |
 | `tool_call` | 工具调用已分发 |
 | `tool_result` | 工具结果已返回 |
 | `complete` | Agent 正常结束 |
@@ -99,14 +100,14 @@ $result = $this->agentic->runStream('general', $messages, function (string $even
 使用动态配置执行 Agent，跳过 Agent 名称查找。适用于数据库驱动的多 Agent 场景。
 
 ```php
-public function runWithConfig(array $agentConfig, array $messages, array $options = []): AgentResult
+public function runWithConfig(Agent|array $agentConfig, array $messages, array $options = []): AgentResult
 ```
 
 **参数：**
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `$agentConfig` | array | Agent 配置（见下方结构） |
+| `$agentConfig` | Agent\|array | Agent DTO 或配置数组（见下方结构） |
 | `$messages` | array | 消息数组 |
 | `$options` | array | `conversation_id`、`runtime_context` 等 |
 
@@ -154,7 +155,7 @@ $result = $this->agentic->runWithConfig(
 
 ```php
 public function runStreamWithConfig(
-    array $agentConfig,
+    Agent|array $agentConfig,
     array $messages,
     ?callable $onEvent = null,
     array $options = [],
@@ -198,29 +199,23 @@ echo $result['content']; // 完整拼接后的回复
 
 ## OpenAI 兼容 SSE 输出
 
-SDK 提供了便捷方法，将流式输出格式化为 OpenAI 兼容的 SSE 格式，前端可以按照 OpenAI 的规范直接对接。
-
-### runStreamSse()
-
-执行指定名称的 Agent（流式），输出 OpenAI 兼容的 SSE 数据块。
+使用 `SseWriter` 将流式事件格式化为 OpenAI 兼容的 SSE：
 
 ```php
-public function runStreamSse(
-    string $agentName,
-    array $messages,
-    callable $write,
-    array $options = [],
-): AgentResult
+use ChenZhanjie\Agentic\Stream\SseWriter;
+
+// Agent 流式 — model 自动从 started 事件获取
+$sse = new SseWriter(fn(string $line) => $eventStream->write($line));
+$result = $agentic->runStream('general', $messages, $sse->asOnEvent());
 ```
 
-**参数：**
+纯 LLM 对话流式：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `$agentName` | string | Agent 名称 |
-| `$messages` | array | 消息数组 |
-| `$write` | callable | SSE 行回调 `fn(string $sseLine): void` |
-| `$options` | array | 运行时选项 |
+```php
+$sse = new SseWriter(fn(string $line) => echo $line, model: 'gpt-4o');
+$result = $agentic->chatStream($messages, $sse->asOnChunk());
+$sse->finish($result['usage'] ?? []);
+```
 
 **SSE 输出格式：**
 
@@ -232,55 +227,6 @@ data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":
 data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{...}}
 
 data: [DONE]
-```
-
-**示例：**
-
-```php
-$result = $this->agentic->runStreamSse('general', $messages, function (string $sseLine) {
-    echo $sseLine;
-    ob_flush();
-});
-```
-
-### runStreamWithConfigSse()
-
-`runWithConfig()` 的流式版本，输出 OpenAI 兼容的 SSE。
-
-```php
-public function runStreamWithConfigSse(
-    array $agentConfig,
-    array $messages,
-    callable $write,
-    array $options = [],
-): AgentResult
-```
-
-### chatStreamSse()
-
-纯 LLM 流式对话，输出 OpenAI 兼容的 SSE。
-
-```php
-public function chatStreamSse(array $messages, callable $write, array $options = []): array
-```
-
-**返回：** 包含 `content`、`usage` 等键的归一化数组。
-
-### 高级用法：自定义格式化器
-
-直接使用 `OpenAiSseFormatter` 获得更多控制：
-
-```php
-use ChenZhanjie\Agentic\Stream\Formatter\OpenAiSseFormatter;
-
-$formatter = new OpenAiSseFormatter(
-    write: fn(string $line) => echo $line,
-    model: 'gpt-4o',
-    id: 'chatcmpl-custom',
-);
-
-$result = $this->agentic->runStream('agent', $messages, $formatter->asOnEvent());
-$formatter->done();
 ```
 
 **结束原因（finish_reason）：**

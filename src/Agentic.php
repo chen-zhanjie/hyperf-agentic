@@ -4,13 +4,11 @@ declare(strict_types=1);
 namespace ChenZhanjie\Agentic;
 
 use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
-use ChenZhanjie\Agentic\Contract\StreamFormatterInterface;
 use ChenZhanjie\Agentic\Contract\MessageStoreInterface;
 use ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface;
 use ChenZhanjie\Agentic\Contract\SessionStoreInterface;
 use ChenZhanjie\Agentic\Event\EventEmitter;
 use ChenZhanjie\Agentic\Persona\Persona;
-use ChenZhanjie\Agentic\Stream\Formatter\OpenAiSseFormatter;
 
 /**
  * Agentic Facade — Layer 4 unified entry point.
@@ -70,18 +68,19 @@ class Agentic
     }
 
     /**
-     * Execute an agent with a dynamic config array (bypasses agent name lookup).
+     * Execute an agent with a dynamic config (bypasses agent name lookup).
      *
-     * Merges $this->defaults as the base layer, then $agentConfig on top.
+     * Accepts either an Agent DTO or a legacy array config.
+     * Merges $this->defaults as the base layer, then agent config on top.
      * Supports conversation_id option for automatic history load/append.
      *
-     * @param array $agentConfig  Full agent configuration (persona, tools, skills, etc.)
-     * @param array $messages     New messages for this turn
-     * @param array $options      Runtime options: conversation_id, runtime_context, etc.
+     * @param Agent|array $agentConfig  Agent DTO or full config array
+     * @param array       $messages     New messages for this turn
+     * @param array       $options      Runtime options: conversation_id, runtime_context, etc.
      */
-    public function runWithConfig(array $agentConfig, array $messages, array $options = []): AgentResult
+    public function runWithConfig(Agent|array $agentConfig, array $messages, array $options = []): AgentResult
     {
-        $config = array_replace_recursive($this->defaults, $agentConfig);
+        $config = $this->resolveAgentConfig($agentConfig);
         $fullMessages = $this->resolveMessages($messages, $options);
 
         $result = $this->runner->run($fullMessages, $config, $options);
@@ -95,10 +94,12 @@ class Agentic
 
     /**
      * Execute an agent with dynamic config + streaming support.
+     *
+     * @param Agent|array $agentConfig  Agent DTO or full config array
      */
-    public function runStreamWithConfig(array $agentConfig, array $messages, ?callable $onEvent = null, array $options = []): AgentResult
+    public function runStreamWithConfig(Agent|array $agentConfig, array $messages, ?callable $onEvent = null, array $options = []): AgentResult
     {
-        $config = array_replace_recursive($this->defaults, $agentConfig);
+        $config = $this->resolveAgentConfig($agentConfig);
         $fullMessages = $this->resolveMessages($messages, $options);
 
         $result = $this->runner->runStream($fullMessages, $config, $options, $onEvent);
@@ -126,62 +127,6 @@ class Agentic
         ];
 
         return $this->runner->chatStream($messages, $llmOptions, $onChunk);
-    }
-
-    // ── SSE Convenience Methods ──
-
-    /**
-     * Execute a named agent with streaming, formatted as OpenAI SSE.
-     *
-     * @param callable $write  fn(string $sseLine): void — receives raw SSE lines
-     */
-    public function runStreamSse(string $agentName, array $messages, callable $write, array $options = []): AgentResult
-    {
-        $formatter = new OpenAiSseFormatter(
-            write: $write,
-            model: $options['model'] ?? $this->agentDefs[$agentName]['model'] ?? '',
-        );
-
-        $result = $this->runStream($agentName, $messages, $formatter->asOnEvent(), $options);
-        $formatter->done();
-
-        return $result;
-    }
-
-    /**
-     * Execute an agent with dynamic config + streaming, formatted as OpenAI SSE.
-     *
-     * @param callable $write  fn(string $sseLine): void — receives raw SSE lines
-     */
-    public function runStreamWithConfigSse(array $agentConfig, array $messages, callable $write, array $options = []): AgentResult
-    {
-        $formatter = new OpenAiSseFormatter(
-            write: $write,
-            model: $options['model'] ?? $agentConfig['model'] ?? '',
-        );
-
-        $result = $this->runStreamWithConfig($agentConfig, $messages, $formatter->asOnEvent(), $options);
-        $formatter->done();
-
-        return $result;
-    }
-
-    /**
-     * Pure LLM streaming chat, formatted as OpenAI SSE.
-     *
-     * @param callable $write  fn(string $sseLine): void — receives raw SSE lines
-     */
-    public function chatStreamSse(array $messages, callable $write, array $options = []): array
-    {
-        $formatter = new OpenAiSseFormatter(
-            write: $write,
-            model: $options['model_override'] ?? $this->agentDefs['__llm__']['model'] ?? '',
-        );
-
-        $result = $this->chatStream($messages, $formatter->asOnChunk(), $options);
-        $formatter->finish($result['usage'] ?? []);
-
-        return $result;
     }
 
     /**
@@ -335,5 +280,17 @@ class Agentic
             $this->defaults,
             $this->agentDefs[$agentName],
         );
+    }
+
+    /**
+     * Resolve Agent DTO or array to a merged config array.
+     */
+    private function resolveAgentConfig(Agent|array $agentConfig): array
+    {
+        $config = $agentConfig instanceof Agent
+            ? array_replace_recursive($this->defaults, $agentConfig->toArray())
+            : array_replace_recursive($this->defaults, $agentConfig);
+
+        return $config;
     }
 }

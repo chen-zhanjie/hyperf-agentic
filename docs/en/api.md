@@ -79,6 +79,7 @@ public function runStream(
 | `started` | Agent loop started |
 | `thinking` | About to call the LLM |
 | `text_delta` | New text token chunk (`data['content']`) |
+| `reasoning_delta` | Reasoning/thinking token chunk (`data['content']`) |
 | `tool_call` | Tool call dispatched |
 | `tool_result` | Tool result received |
 | `complete` | Agent finished successfully |
@@ -94,19 +95,59 @@ $result = $this->agentic->runStream('general', $messages, function (string $even
 });
 ```
 
+### SSE Output
+
+Use `SseWriter` to format streaming events as OpenAI-compatible SSE:
+
+```php
+use ChenZhanjie\Agentic\Stream\SseWriter;
+
+$sse = new SseWriter(fn(string $line) => $eventStream->write($line));
+$result = $agentic->runStream('general', $messages, $sse->asOnEvent());
+```
+
+For pure LLM chat streaming:
+
+```php
+$sse = new SseWriter(fn(string $line) => echo $line, model: 'gpt-4o');
+$result = $agentic->chatStream($messages, $sse->asOnChunk());
+$sse->finish($result['usage'] ?? []);
+```
+
+**SSE output format:**
+
+```
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
+
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"}}]}
+
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{...}}
+
+data: [DONE]
+```
+
+**Finish reasons:**
+
+| Scenario | `finish_reason` |
+|----------|----------------|
+| Normal completion | `"stop"` |
+| Budget exhausted | `"length"` |
+| Guardrail blocked | `"content_filter"` |
+| Explicit tool_calls | `"tool_calls"` |
+
 ### runWithConfig()
 
 Execute an agent with a dynamic config array, bypassing agent name lookup. Designed for database-driven multi-agent scenarios.
 
 ```php
-public function runWithConfig(array $agentConfig, array $messages, array $options = []): AgentResult
+public function runWithConfig(Agent|array $agentConfig, array $messages, array $options = []): AgentResult
 ```
 
 **Parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `$agentConfig` | array | Agent configuration (see structure below) |
+| `$agentConfig` | Agent\|array | Agent DTO or configuration array (see structure below) |
 | `$messages` | array | Message array |
 | `$options` | array | `conversation_id`, `runtime_context`, etc. |
 
@@ -154,7 +195,7 @@ Streaming variant of `runWithConfig()`.
 
 ```php
 public function runStreamWithConfig(
-    array $agentConfig,
+    Agent|array $agentConfig,
     array $messages,
     ?callable $onEvent = null,
     array $options = [],
@@ -197,102 +238,6 @@ echo $result['content']; // Full assembled response
 ```
 
 ## Session Resume
-
-## OpenAI-Compatible SSE Output
-
-The SDK provides convenience methods that format streaming output as OpenAI-compatible SSE, so frontends built for the OpenAI API can directly consume responses.
-
-### runStreamSse()
-
-Execute a named agent with streaming, outputting OpenAI-compatible SSE chunks.
-
-```php
-public function runStreamSse(
-    string $agentName,
-    array $messages,
-    callable $write,
-    array $options = [],
-): AgentResult
-```
-
-**Parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `$agentName` | string | Agent name |
-| `$messages` | array | Message array |
-| `$write` | callable | SSE line callback `fn(string $sseLine): void` |
-| `$options` | array | Runtime options |
-
-**SSE output format:**
-
-```
-data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
-
-data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"}}]}
-
-data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{...}}
-
-data: [DONE]
-```
-
-**Example:**
-
-```php
-$result = $this->agentic->runStreamSse('general', $messages, function (string $sseLine) {
-    echo $sseLine;
-    ob_flush();
-});
-```
-
-### runStreamWithConfigSse()
-
-Streaming variant of `runWithConfig()` with OpenAI SSE output.
-
-```php
-public function runStreamWithConfigSse(
-    array $agentConfig,
-    array $messages,
-    callable $write,
-    array $options = [],
-): AgentResult
-```
-
-### chatStreamSse()
-
-Pure LLM streaming chat with OpenAI SSE output.
-
-```php
-public function chatStreamSse(array $messages, callable $write, array $options = []): array
-```
-
-**Returns:** Normalized array with `content`, `usage`, and optional keys.
-
-### Advanced: Custom Formatter
-
-Use the `OpenAiSseFormatter` directly for more control:
-
-```php
-use ChenZhanjie\Agentic\Stream\Formatter\OpenAiSseFormatter;
-
-$formatter = new OpenAiSseFormatter(
-    write: fn(string $line) => echo $line,
-    model: 'gpt-4o',
-    id: 'chatcmpl-custom',
-);
-
-$result = $this->agentic->runStream('agent', $messages, $formatter->asOnEvent());
-$formatter->done();
-```
-
-**Finish reasons:**
-
-| Scenario | `finish_reason` |
-|----------|----------------|
-| Normal completion | `"stop"` |
-| Budget exhausted | `"length"` |
-| Guardrail blocked | `"content_filter"` |
-| Explicit tool_calls | `"tool_calls"` |
 
 ### resume()
 
