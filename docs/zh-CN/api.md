@@ -104,8 +104,16 @@ public function runWithConfig(array $agentConfig, array $messages, array $option
     'tools' => ['search', 'ask'],        // 工具白名单
     'skills' => ['guide'],               // 技能白名单
     'guardrails' => ['content_filter'],  // 护栏白名单
+    'guardrail_modes' => ['content_filter' => 'async'], // 护栏模式覆盖
+    'tool_permissions' => [              // 工具权限规则
+        'allow' => ['search_*', 'ask'],
+        'deny' => ['exec_*'],
+    ],
+    'permission_mode' => 'default',     // 权限模式：default|auto|strict|readonly
+    'auto_approve' => true,             // 自动审批工具（true 或模式数组）
     'max_iterations' => 15,              // 最大迭代
     'system_prompt' => 'Extra rules',    // 附加系统提示
+    'cancellation_timeout_ms' => 30000,  // 30 秒后自动取消
 ]
 ```
 
@@ -231,6 +239,56 @@ public function has(string $agentName): bool
 ```php
 public function setHumanInputResolver(HumanInputResolverInterface $resolver): void
 ```
+
+## 权限审批
+
+管理工具执行的全局或按会话审批。
+
+### approveTool()
+
+全局或为指定会话审批一个工具或模式。
+
+```php
+public function approveTool(string $toolOrPattern, ?string $sessionId = null): void
+```
+
+**示例：**
+
+```php
+// 全局审批
+$this->agentic->approveTool('search_*');
+
+// 为指定会话审批
+$this->agentic->approveTool('delete_db', 'conv-123');
+```
+
+### approveAll()
+
+全局或为指定会话审批所有工具。
+
+```php
+public function approveAll(?string $sessionId = null): void
+```
+
+### revokeTool()
+
+撤销指定审批。
+
+```php
+public function revokeTool(string $toolOrPattern, ?string $sessionId = null): void
+```
+
+### revokeAll()
+
+撤销全局或指定会话的所有审批。
+
+```php
+public function revokeAll(?string $sessionId = null): void
+```
+
+### 已弃用方法
+
+> `approveToolForSession()` 和 `approveAllForSession()` 已弃用。请使用 `approveTool($tool, $sessionId)` 和 `approveAll($sessionId)` 替代。
 
 ## AgentResult
 

@@ -13,10 +13,12 @@ Layer 1: Contract (Interface Layer)
     │
 Layer 2: Subsystems
     │   ToolRegistry, GuardrailRunner, ToolGuardrailRunner,
-    │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline
+    │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline,
+    │   ToolDispatcher
     │
 Layer 3: Agent Core
-    │   AgentRunner, AgentRunContext, AgentResult, AgentConfigManager
+    │   AgentRunner, ToolDispatcher, LoopState,
+    │   AgentRunContext, AgentResult, AgentConfigManager
     │
 Layer 4: Facade
     │   Agentic — unified entry point
@@ -87,16 +89,20 @@ AgentRunner implements the standard ReAct (Reasoning + Acting) loop:
 
 ### Tool Dispatch Chain
 
-When a tool call is dispatched:
+`ToolDispatcher` owns the tool dispatch chain, injected into `AgentRunner`:
 
 ```
 1. Tool Guardrail (input check)      → can block or sanitize arguments
-2. Permission Policy (deny/ask/allow) → can deny or require user confirmation
-3. Middleware (beforeToolCall)        → can intercept
-4. Agent-level handler               → or ToolRegistry::execute()
-5. Tool Guardrail (output check)     → can block or transform output
-6. Middleware (afterToolCall)
+2. Approval Store bypass             → pre-approved tools skip policy check
+3. Permission Policy (deny/ask/allow) → can deny or require user confirmation
+4. Human Approval (if ASK)           → ONCE / TOOL / SESSION / DENY
+5. Middleware (beforeToolCall)        → can intercept
+6. Agent-level handler               → or ToolRegistry::execute()
+7. Tool Guardrail (output check)     → can block or transform output
+8. Middleware (afterToolCall)
 ```
+
+Approval prompts are customizable via `Support\ApprovalPrompts` — override static properties for i18n.
 
 ### AgentRunContext (Per-Request Context)
 
@@ -105,9 +111,11 @@ When a tool call is dispatched:
 - Active guardrails (filtered per agent)
 - Tool guardrails
 - Permission policy
+- Approval store (cloned per-request for isolation)
 - Human input resolver
 - Agent-level tool handlers
 - Cancellation token
+- Session ID
 
 This replaces mutable instance properties on the singleton `AgentRunner`, eliminating race conditions under Swoole coroutines.
 
@@ -152,12 +160,14 @@ This ensures concurrency safety in Hyperf's coroutine model — per-agent filter
 Contract\MessageStoreInterface::class => Session\MemoryMessageStore::class,
 Contract\ToolPermissionPolicyInterface::class => Policy\ConfigToolPermissionPolicy::class,
 Contract\GuardrailAuditLoggerInterface::class => GuardrailAuditLogger::class,
+Contract\PermissionApprovalStoreInterface::class => PermissionApprovalStore::class,
 
 // Factory (__invoke produces the instance)
 Skill\SkillRegistry::class => SkillRegistryFactory::class,
 ToolRegistry::class => ToolRegistryFactory::class,
 
 // Self-registration (constructor injects dependencies)
+ToolDispatcher::class => ToolDispatcher::class,
 AgentRunner::class => AgentRunner::class,
 Agentic::class => Agentic::class,
 ```
@@ -181,6 +191,7 @@ src/
 │   ├── GuardrailInterface.php
 │   ├── ToolGuardrailInterface.php
 │   ├── ToolPermissionPolicyInterface.php
+│   ├── PermissionApprovalStoreInterface.php
 │   ├── GuardrailAuditLoggerInterface.php
 │   ├── RiskyToolInterface.php
 │   ├── SkillInterface.php
@@ -201,10 +212,20 @@ src/
 ├── Loader/            # Loaders (Annotation, Config, Skill)
 ├── Event/             # Event system
 ├── Tracing/           # Distributed tracing
+├── Support/           # Support utilities
+│   ├── ApprovalPrompts.php    # Customizable approval prompt templates
+│   ├── ConfigLoader.php
+│   ├── DefaultPrompts.php
+│   └── TokenEstimator.php
 ├── Attributes/        # PHP 8 Attributes (#[AsTool], etc.)
 ├── AgentRunner.php    # Layer 3: Agent core
+├── ToolDispatcher.php # Layer 3: Tool dispatch chain (guardrails → permissions → execution)
+├── LoopState.php      # Per-request mutable loop accumulator
 ├── AgentRunContext.php # Per-request immutable context
 ├── AgentResult.php    # Agent execution result
+├── ApprovalChoice.php # User approval choice enum (ONCE/TOOL/SESSION/DENY)
+├── PermissionMode.php # Permission mode enum (DEFAULT/AUTO/STRICT/READONLY)
+├── PermissionApprovalStore.php # In-memory approval store (wildcard + dual-scope)
 ├── PromptBuilder.php  # Prompt builder
 ├── ToolRegistry.php   # Tool registry
 ├── ToolGuardrailRunner.php  # Tool-level guardrail runner

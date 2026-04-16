@@ -13,10 +13,12 @@ Layer 1: Contract（接口层）
     │
 Layer 2: Subsystems（子系统）
     │   ToolRegistry, GuardrailRunner, ToolGuardrailRunner,
-    │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline
+    │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline,
+    │   ToolDispatcher
     │
 Layer 3: Agent Core（Agent 核心）
-    │   AgentRunner, AgentRunContext, AgentResult, AgentConfigManager
+    │   AgentRunner, ToolDispatcher, LoopState,
+    │   AgentRunContext, AgentResult, AgentConfigManager
     │
 Layer 4: Facade（门面）
     │   Agentic — 统一入口
@@ -87,16 +89,20 @@ AgentRunner 实现了标准的 ReAct（Reasoning + Acting）循环：
 
 ### 工具分发链
 
-当工具调用被分发时：
+`ToolDispatcher` 拥有工具分发链，注入到 `AgentRunner` 中：
 
 ```
 1. 工具护栏（输入检查）        → 可拦截或修正参数
-2. 权限策略（deny/ask/allow）  → 可拒绝或要求用户确认
-3. 中间件（beforeToolCall）    → 可拦截
-4. Agent 级处理器              → 或 ToolRegistry::execute()
-5. 工具护栏（输出检查）        → 可拦截或转换输出
-6. 中间件（afterToolCall）
+2. 审批存储绕过                → 已预审批的工具跳过策略检查
+3. 权限策略（deny/ask/allow）  → 可拒绝或要求用户确认
+4. 人工审批（如果为 ASK）      → ONCE / TOOL / SESSION / DENY
+5. 中间件（beforeToolCall）    → 可拦截
+6. Agent 级处理器              → 或 ToolRegistry::execute()
+7. 工具护栏（输出检查）        → 可拦截或转换输出
+8. 中间件（afterToolCall）
 ```
+
+审批提示可通过 `Support\ApprovalPrompts` 自定义 — 覆盖静态属性以实现国际化。
 
 ### AgentRunContext（Per-Request 上下文）
 
@@ -105,9 +111,11 @@ AgentRunner 实现了标准的 ReAct（Reasoning + Acting）循环：
 - 活跃护栏（按 Agent 过滤）
 - 工具护栏
 - 权限策略
+- 审批存储（每次请求克隆隔离）
 - 人工输入解析器
 - Agent 级工具处理器
 - 取消令牌
+- 会话 ID
 
 这替代了单例 `AgentRunner` 上的可变实例属性，消除了 Swoole 协程下的竞态条件。
 
@@ -152,12 +160,14 @@ $filteredRegistry = $registry->only(['search', 'ask']);
 Contract\MessageStoreInterface::class => Session\MemoryMessageStore::class,
 Contract\ToolPermissionPolicyInterface::class => Policy\ConfigToolPermissionPolicy::class,
 Contract\GuardrailAuditLoggerInterface::class => GuardrailAuditLogger::class,
+Contract\PermissionApprovalStoreInterface::class => PermissionApprovalStore::class,
 
 // 工厂（__invoke 产生实例）
 Skill\SkillRegistry::class => SkillRegistryFactory::class,
 ToolRegistry::class => ToolRegistryFactory::class,
 
 // 自注册（构造函数注入依赖）
+ToolDispatcher::class => ToolDispatcher::class,
 AgentRunner::class => AgentRunner::class,
 Agentic::class => Agentic::class,
 ```
@@ -181,6 +191,7 @@ src/
 │   ├── GuardrailInterface.php
 │   ├── ToolGuardrailInterface.php
 │   ├── ToolPermissionPolicyInterface.php
+│   ├── PermissionApprovalStoreInterface.php
 │   ├── GuardrailAuditLoggerInterface.php
 │   ├── RiskyToolInterface.php
 │   ├── SkillInterface.php
@@ -201,10 +212,20 @@ src/
 ├── Loader/            # 加载器（Annotation, Config, Skill）
 ├── Event/             # 事件系统
 ├── Tracing/           # 链路追踪
+├── Support/           # 支持工具
+│   ├── ApprovalPrompts.php    # 可自定义的审批提示模板
+│   ├── ConfigLoader.php
+│   ├── DefaultPrompts.php
+│   └── TokenEstimator.php
 ├── Attributes/        # PHP 8 Attribute（#[AsTool] 等）
 ├── AgentRunner.php    # Layer 3: Agent 核心
+├── ToolDispatcher.php # Layer 3: 工具分发链（护栏 → 权限 → 执行）
+├── LoopState.php      # 每次请求的可变循环累加器
 ├── AgentRunContext.php # Per-Request 不可变上下文
 ├── AgentResult.php    # Agent 执行结果
+├── ApprovalChoice.php # 用户审批选择枚举（ONCE/TOOL/SESSION/DENY）
+├── PermissionMode.php # 权限模式枚举（DEFAULT/AUTO/STRICT/READONLY）
+├── PermissionApprovalStore.php # 内存审批存储（通配符 + 双作用域）
 ├── PromptBuilder.php  # 提示构建器
 ├── ToolRegistry.php   # 工具注册表
 ├── ToolGuardrailRunner.php  # 工具级护栏运行器

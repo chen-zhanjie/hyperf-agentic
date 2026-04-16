@@ -7,6 +7,7 @@ use PHPUnit\Framework\TestCase;
 use ChenZhanjie\Agentic\AgentRunContext;
 use ChenZhanjie\Agentic\CancellationToken;
 use ChenZhanjie\Agentic\GuardrailRunner;
+use ChenZhanjie\Agentic\PermissionApprovalStore;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\ToolGuardrailRunner;
 
@@ -143,5 +144,55 @@ class AgentRunContextTest extends TestCase
         $context2 = new AgentRunContext(guardrails: $runner2, toolGuardrails: new ToolGuardrailRunner(), permissionPolicy: $this->policy);
 
         $this->assertNotSame($context1->guardrails, $context2->guardrails);
+    }
+
+    // ── approvalStore + sessionId ──
+
+    public function testApprovalStoreDefaultsToNull(): void
+    {
+        $context = new AgentRunContext(
+            guardrails: new GuardrailRunner(),
+            toolGuardrails: new ToolGuardrailRunner(),
+            permissionPolicy: $this->policy,
+        );
+
+        $this->assertNull($context->approvalStore);
+        $this->assertNull($context->sessionId);
+    }
+
+    public function testApprovalStoreAndSessionIdCanBeSet(): void
+    {
+        $store = new PermissionApprovalStore();
+        $context = new AgentRunContext(
+            guardrails: new GuardrailRunner(),
+            toolGuardrails: new ToolGuardrailRunner(),
+            permissionPolicy: $this->policy,
+            approvalStore: $store,
+            sessionId: 'conv-123',
+        );
+
+        $this->assertSame($store, $context->approvalStore);
+        $this->assertSame('conv-123', $context->sessionId);
+    }
+
+    public function testConstructsWithAllNewParameters(): void
+    {
+        $store = new PermissionApprovalStore();
+        $token = new CancellationToken();
+
+        $context = new AgentRunContext(
+            guardrails: new GuardrailRunner(),
+            toolGuardrails: new ToolGuardrailRunner(),
+            permissionPolicy: $this->policy,
+            approvalStore: $store,
+            humanInputResolver: null,
+            agentToolHandlers: [],
+            cancellationToken: $token,
+            sessionId: 'session-abc',
+        );
+
+        $this->assertSame($store, $context->approvalStore);
+        $this->assertSame('session-abc', $context->sessionId);
+        $this->assertSame($token, $context->cancellationToken);
     }
 }

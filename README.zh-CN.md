@@ -93,6 +93,10 @@ $result = $agentic->runWithConfig(
 | `chat(messages)` | 纯 LLM 对话（无工具） |
 | `chatStream(messages, onChunk)` | 纯 LLM 流式对话 |
 | `resume(sessionId)` | 恢复挂起的会话 |
+| `approveTool(tool, sessionId)` | 全局或按会话批准工具/模式 |
+| `approveAll(sessionId)` | 全局或按会话批准所有工具 |
+| `revokeTool(tool, sessionId)` | 撤销工具批准 |
+| `revokeAll(sessionId)` | 撤销所有批准 |
 
 ## 文档
 
@@ -118,7 +122,7 @@ Layer 5: 入口层 (Controller / Command / CLI)
     ↓
 Layer 4: 门面层 (Agentic.php — 配置驱动的统一入口)
     ↓
-Layer 3: Agent 核心 (AgentRunner + GuardrailRunner + MiddlewarePipeline)
+Layer 3: Agent 核心 (AgentRunner + ToolDispatcher + LoopState + GuardrailRunner + MiddlewarePipeline)
     ↓
 Layer 2: 子系统 (ToolRegistry / PromptBuilder / LlmClient / SkillRegistry)
     ↓
@@ -132,7 +136,7 @@ composer install
 vendor/bin/phpunit
 ```
 
-500 个测试，916 个断言 — 全部通过。
+543 个测试，1008 个断言 — 全部通过。
 
 ## 许可证
 

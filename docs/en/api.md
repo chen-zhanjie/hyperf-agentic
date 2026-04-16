@@ -109,6 +109,8 @@ public function runWithConfig(array $agentConfig, array $messages, array $option
         'allow' => ['search_*', 'ask'],
         'deny' => ['exec_*'],
     ],
+    'permission_mode' => 'default',     // Permission mode: default|auto|strict|readonly
+    'auto_approve' => true,             // Auto-approve tools (true, or array of patterns)
     'max_iterations' => 15,              // Max iterations
     'system_prompt' => 'Extra rules',    // Additional system prompt
     'cancellation_timeout_ms' => 30000,  // Auto-cancel after 30s
@@ -237,6 +239,56 @@ Set the human input resolver (injected into AskTool).
 ```php
 public function setHumanInputResolver(HumanInputResolverInterface $resolver): void
 ```
+
+## Permission Approval
+
+Manage tool execution approvals globally or per-session.
+
+### approveTool()
+
+Approve a tool or pattern globally or for a specific session.
+
+```php
+public function approveTool(string $toolOrPattern, ?string $sessionId = null): void
+```
+
+**Example:**
+
+```php
+// Approve globally
+$this->agentic->approveTool('search_*');
+
+// Approve for a specific session
+$this->agentic->approveTool('delete_db', 'conv-123');
+```
+
+### approveAll()
+
+Approve all tools globally or for a specific session.
+
+```php
+public function approveAll(?string $sessionId = null): void
+```
+
+### revokeTool()
+
+Revoke a specific approval.
+
+```php
+public function revokeTool(string $toolOrPattern, ?string $sessionId = null): void
+```
+
+### revokeAll()
+
+Revoke all approvals globally or for a session.
+
+```php
+public function revokeAll(?string $sessionId = null): void
+```
+
+### Deprecated Methods
+
+> `approveToolForSession()` and `approveAllForSession()` are deprecated. Use `approveTool($tool, $sessionId)` and `approveAll($sessionId)` instead.
 
 ## AgentResult
 

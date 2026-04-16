@@ -36,6 +36,7 @@ class ConfigProvider
             Contract\TraceExporterInterface::class => Tracing\LogTraceExporter::class,
             Contract\ToolPermissionPolicyInterface::class => Policy\ConfigToolPermissionPolicy::class,
             Contract\GuardrailAuditLoggerInterface::class => GuardrailAuditLogger::class,
+            Contract\PermissionApprovalStoreInterface::class => PermissionApprovalStore::class,
 
             // Layer 2: Subsystems
             Persona\PersonaLoader::class => Persona\PersonaLoader::class,
@@ -55,6 +56,7 @@ class ConfigProvider
             GuardrailRunner::class => GuardrailRunner::class,
             ToolGuardrailRunner::class => ToolGuardrailRunner::class,
             MiddlewarePipeline::class => MiddlewarePipeline::class,
+            ToolDispatcher::class => ToolDispatcher::class,
             AgentRunner::class => AgentRunner::class,
 
             // Layer 4: Facade

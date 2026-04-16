@@ -258,9 +258,12 @@ Tool Guardrail (input check)
   → blocked: return error to LLM
   → sanitize: modify arguments, continue to next guardrail
   ↓
+Approval Store bypass
+  → pre-approved: skip to execution
+  ↓
 Permission Policy (deny/ask/allow)
   → denied: return error to LLM
-  → ask: prompt user for confirmation
+  → ask: prompt user with ApprovalChoice (ONCE/TOOL/SESSION/DENY)
   ↓
 Middleware → Tool execution
   ↓
@@ -270,6 +273,8 @@ Tool Guardrail (output check)
   ↓
 Return to agent loop
 ```
+
+Approval prompts are customizable via `ChenZhanjie\Agentic\Support\ApprovalPrompts` — override static properties for i18n or branding.
 
 Multiple tool guardrails run in sequence. Sanitize and transform operations pass modified values to subsequent guardrails.
 
@@ -364,6 +369,7 @@ Priority: `deny > ask > allow > default threshold`. Patterns support `*` wildcar
 ### Permission Decision Flow
 
 ```
+0. Approval Store bypass     → pre-approved tools skip all checks
 1. Is tool in deny list?    → DENY (return error)
 2. Is tool in ask list?     → ASK  (prompt user for confirmation)
 3. Is tool in allow list?   → ALLOW
@@ -371,12 +377,24 @@ Priority: `deny > ask > allow > default threshold`. Patterns support `*` wildcar
 5. Default                  → ALLOW
 ```
 
+The `PermissionMode` enum modifies the default behavior:
+
+| Mode | Behavior |
+|------|----------|
+| `default` | Standard: respect deny/ask/allow lists and risk thresholds |
+| `auto` | Bypass all ASK decisions — tools execute without human confirmation |
+| `strict` | All tools require human confirmation regardless of risk level |
+| `readonly` | Only tools marked as `LOW` risk are allowed |
+
+Set via agent config: `'permission_mode' => 'auto'`.
+
 ### Events
 
 | Event | When |
 |-------|------|
 | `tool_blocked` | Tool guardrail blocks a tool call |
 | `tool_denied` | Permission policy denies a tool call |
+| `tool_auto_approved` | Approval store bypasses policy check |
 
 ## Cancellation Tokens
 
@@ -551,3 +569,4 @@ $result->stopReason;            // 'guardrail'
 | `message_recalled` | RecallTool executed (LLM self-recall or external) |
 | `tool_blocked` | Tool guardrail blocks a tool call |
 | `tool_denied` | Permission policy denies a tool call |
+| `tool_auto_approved` | Approval store bypasses policy check |

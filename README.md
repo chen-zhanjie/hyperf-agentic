@@ -93,6 +93,10 @@ $result = $agentic->runWithConfig(
 | `chat(messages)` | Pure LLM chat (no tools) |
 | `chatStream(messages, onChunk)` | Pure LLM streaming |
 | `resume(sessionId)` | Resume a suspended session |
+| `approveTool(tool, sessionId)` | Approve a tool/pattern globally or per-session |
+| `approveAll(sessionId)` | Approve all tools globally or per-session |
+| `revokeTool(tool, sessionId)` | Revoke a tool approval |
+| `revokeAll(sessionId)` | Revoke all approvals |
 
 ## Documentation
 
@@ -118,7 +122,7 @@ Layer 5: Entry Points (Controller / Command / CLI)
     ↓
 Layer 4: Agentic Facade (config-driven entry point)
     ↓
-Layer 3: Agent Core (AgentRunner + GuardrailRunner + MiddlewarePipeline)
+Layer 3: Agent Core (AgentRunner + ToolDispatcher + LoopState + GuardrailRunner + MiddlewarePipeline)
     ↓
 Layer 2: Subsystems (ToolRegistry / PromptBuilder / LlmClient / SkillRegistry)
     ↓
@@ -132,7 +136,7 @@ composer install
 vendor/bin/phpunit
 ```
 
-500 tests, 916 assertions — all passing.
+543 tests, 1008 assertions — all passing.
 
 ## License
 

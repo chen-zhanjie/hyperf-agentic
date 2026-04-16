@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace ChenZhanjie\Agentic\Tests\Unit\Policy;
 
 use PHPUnit\Framework\TestCase;
+use ChenZhanjie\Agentic\PermissionMode;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\ToolPermissionDecision;
 use ChenZhanjie\Agentic\ToolRiskLevel;
@@ -109,7 +110,7 @@ class ConfigToolPermissionPolicyTest extends TestCase
         $this->assertSame(ToolPermissionDecision::ALLOW, $decision);
     }
 
-    // ── priority: deny > ask > allow ──
+    // ── priority: deny > allow > ask ──
 
     public function testDenyTakesPriorityOverAsk(): void
     {
@@ -137,17 +138,17 @@ class ConfigToolPermissionPolicyTest extends TestCase
         $this->assertSame(ToolPermissionDecision::DENY, $decision);
     }
 
-    public function testAskTakesPriorityOverAllow(): void
+    public function testAllowTakesPriorityOverAsk(): void
     {
         $policy = new ConfigToolPermissionPolicy(
             rules: [
-                'ask' => ['special_*'],
                 'allow' => ['special_*'],
+                'ask' => ['special_*'],
             ],
         );
 
         $decision = $policy->decide('special_action', ToolRiskLevel::LOW, []);
-        $this->assertSame(ToolPermissionDecision::ASK, $decision);
+        $this->assertSame(ToolPermissionDecision::ALLOW, $decision);
     }
 
     // ── wildcard patterns ──
@@ -221,5 +222,111 @@ class ConfigToolPermissionPolicyTest extends TestCase
 
         $this->assertSame(ToolPermissionDecision::DENY, $policy->decide('delete', ToolRiskLevel::LOW, []));
         $this->assertSame(ToolPermissionDecision::ALLOW, $policy->decide('delete_user', ToolRiskLevel::LOW, []));
+    }
+
+    // ── PermissionMode tests ──
+
+    public function testAutoModeAllowsEverything(): void
+    {
+        $policy = new ConfigToolPermissionPolicy(mode: PermissionMode::AUTO);
+
+        $this->assertSame(ToolPermissionDecision::ALLOW, $policy->decide('any_tool', ToolRiskLevel::CRITICAL, []));
+        $this->assertSame(ToolPermissionDecision::ALLOW, $policy->decide('delete_all', ToolRiskLevel::HIGH, []));
+    }
+
+    public function testAutoModeStillRespectsDenyRules(): void
+    {
+        $policy = new ConfigToolPermissionPolicy(
+            rules: ['deny' => ['exec_*']],
+            mode: PermissionMode::AUTO,
+        );
+
+        $this->assertSame(ToolPermissionDecision::DENY, $policy->decide('exec_shell', ToolRiskLevel::LOW, []));
+        $this->assertSame(ToolPermissionDecision::ALLOW, $policy->decide('delete_all', ToolRiskLevel::CRITICAL, []));
+    }
+
+    public function testStrictModeAsksForEverything(): void
+    {
+        $policy = new ConfigToolPermissionPolicy(mode: PermissionMode::STRICT);
+
+        $this->assertSame(ToolPermissionDecision::ASK, $policy->decide('search', ToolRiskLevel::LOW, []));
+        $this->assertSame(ToolPermissionDecision::ASK, $policy->decide('delete', ToolRiskLevel::HIGH, []));
+    }
+
+    public function testStrictModeStillRespectsDenyRules(): void
+    {
+        $policy = new ConfigToolPermissionPolicy(
+            rules: ['deny' => ['exec_*']],
+            mode: PermissionMode::STRICT,
+        );
+
+        $this->assertSame(ToolPermissionDecision::DENY, $policy->decide('exec_shell', ToolRiskLevel::LOW, []));
+        $this->assertSame(ToolPermissionDecision::ASK, $policy->decide('search', ToolRiskLevel::LOW, []));
+    }
+
+    public function testStrictModeRespectsAllowRules(): void
+    {
+        $policy = new ConfigToolPermissionPolicy(
+            rules: ['allow' => ['search']],
+            mode: PermissionMode::STRICT,
+        );
+
+        $this->assertSame(ToolPermissionDecision::ALLOW, $policy->decide('search', ToolRiskLevel::LOW, []));
+        $this->assertSame(ToolPermissionDecision::ASK, $policy->decide('other', ToolRiskLevel::LOW, []));
+    }
+
+    public function testReadonlyModeAllowsLowRisk(): void
+    {
+        $policy = new ConfigToolPermissionPolicy(mode: PermissionMode::READONLY);
+
+        $this->assertSame(ToolPermissionDecision::ALLOW, $policy->decide('search', ToolRiskLevel::LOW, []));
+    }
+
+    public function testReadonlyModeDeniesHigherRisk(): void
+    {
+        $policy = new ConfigToolPermissionPolicy(mode: PermissionMode::READONLY);
+
+        $this->assertSame(ToolPermissionDecision::DENY, $policy->decide('update', ToolRiskLevel::MEDIUM, []));
+        $this->assertSame(ToolPermissionDecision::DENY, $policy->decide('delete', ToolRiskLevel::HIGH, []));
+        $this->assertSame(ToolPermissionDecision::DENY, $policy->decide('nuke', ToolRiskLevel::CRITICAL, []));
+    }
+
+    public function testReadonlyModeStillRespectsDenyRules(): void
+    {
+        $policy = new ConfigToolPermissionPolicy(
+            rules: ['deny' => ['search_secret']],
+            mode: PermissionMode::READONLY,
+        );
+
+        $this->assertSame(ToolPermissionDecision::DENY, $policy->decide('search_secret', ToolRiskLevel::LOW, []));
+    }
+
+    public function testReadonlyModeAllowOverridesDenyDefault(): void
+    {
+        $policy = new ConfigToolPermissionPolicy(
+            rules: ['allow' => ['specific_update']],
+            mode: PermissionMode::READONLY,
+        );
+
+        // Explicitly allowed even though it's MEDIUM risk
+        $this->assertSame(ToolPermissionDecision::ALLOW, $policy->decide('specific_update', ToolRiskLevel::MEDIUM, []));
+        // Other MEDIUM tools still denied
+        $this->assertSame(ToolPermissionDecision::DENY, $policy->decide('other_update', ToolRiskLevel::MEDIUM, []));
+    }
+
+    public function testDefaultModeWithRules(): void
+    {
+        $policy = new ConfigToolPermissionPolicy(
+            rules: [
+                'allow' => ['search_*'],
+                'ask' => ['delete_*'],
+                'deny' => ['exec_*'],
+            ],
+            mode: PermissionMode::DEFAULT,
+        );
+
+        $this->assertSame(ToolPermissionDecision::ALLOW, $policy->decide('search_users', ToolRiskLevel::LOW, []));
+        $this->assertSame(ToolPermissionDecision::DENY, $policy->decide('exec_shell', ToolRiskLevel::LOW, []));
+        $this->assertSame(ToolPermissionDecision::ASK, $policy->decide('delete_db', ToolRiskLevel::LOW, []));
     }
 }

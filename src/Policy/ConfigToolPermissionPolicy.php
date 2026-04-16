@@ -4,54 +4,60 @@ declare(strict_types=1);
 namespace ChenZhanjie\Agentic\Policy;
 
 use ChenZhanjie\Agentic\Contract\ToolPermissionPolicyInterface;
+use ChenZhanjie\Agentic\PermissionMode;
 use ChenZhanjie\Agentic\ToolPermissionDecision;
 use ChenZhanjie\Agentic\ToolRiskLevel;
 
 /**
- * Config-driven tool permission policy.
+ * Config-driven tool permission policy with permission mode support.
  *
  * Rules format: ['allow' => [...], 'ask' => [...], 'deny' => [...]]
  * Patterns support * wildcard (e.g., 'delete_*', 'exec_*').
  *
- * Priority: deny > ask > allow > default threshold.
+ * Priority: deny > allow > ask > mode default.
+ * The mode determines default behavior when no explicit rules match.
  */
 class ConfigToolPermissionPolicy implements ToolPermissionPolicyInterface
 {
     /**
      * @param array{allow?: string[], ask?: string[], deny?: string[]} $rules
      * @param ToolRiskLevel $defaultAskThreshold Risk level at which unlisted tools require approval
+     * @param PermissionMode $mode Permission mode for default behavior
      */
     public function __construct(
         private readonly array $rules = [],
         private readonly ToolRiskLevel $defaultAskThreshold = ToolRiskLevel::HIGH,
+        private readonly PermissionMode $mode = PermissionMode::DEFAULT,
     ) {}
 
     public function decide(string $toolName, ToolRiskLevel $riskLevel, array $arguments): ToolPermissionDecision
     {
-        // Priority 1: deny rules
-        $denyRules = $this->rules['deny'] ?? [];
-        if ($this->matchesAny($toolName, $denyRules)) {
+        // Step 1: Explicit deny — always enforced regardless of mode
+        if ($this->matchesAny($toolName, $this->rules['deny'] ?? [])) {
             return ToolPermissionDecision::DENY;
         }
 
-        // Priority 2: ask rules
-        $askRules = $this->rules['ask'] ?? [];
-        if ($this->matchesAny($toolName, $askRules)) {
-            return ToolPermissionDecision::ASK;
-        }
-
-        // Priority 3: allow rules
-        $allowRules = $this->rules['allow'] ?? [];
-        if ($this->matchesAny($toolName, $allowRules)) {
+        // Step 2: Explicit allow
+        if ($this->matchesAny($toolName, $this->rules['allow'] ?? [])) {
             return ToolPermissionDecision::ALLOW;
         }
 
-        // Default: check risk level against threshold
-        if ($this->riskLevelAtOrAbove($riskLevel, $this->defaultAskThreshold)) {
+        // Step 3: Explicit ask
+        if ($this->matchesAny($toolName, $this->rules['ask'] ?? [])) {
             return ToolPermissionDecision::ASK;
         }
 
-        return ToolPermissionDecision::ALLOW;
+        // Step 4: No rules matched — mode determines default behavior
+        return match ($this->mode) {
+            PermissionMode::AUTO => ToolPermissionDecision::ALLOW,
+            PermissionMode::STRICT => ToolPermissionDecision::ASK,
+            PermissionMode::READONLY => $riskLevel === ToolRiskLevel::LOW
+                ? ToolPermissionDecision::ALLOW
+                : ToolPermissionDecision::DENY,
+            PermissionMode::DEFAULT => $this->riskLevelAtOrAbove($riskLevel, $this->defaultAskThreshold)
+                ? ToolPermissionDecision::ASK
+                : ToolPermissionDecision::ALLOW,
+        };
     }
 
     /**

@@ -88,6 +88,8 @@ return [
 | `guardrails` | string[] | `[]` | Guardrail whitelist (empty = all active) |
 | `guardrail_modes` | array | `[]` | Guardrail mode overrides: `['name' => 'async']` |
 | `tool_permissions` | array | `[]` | Permission rules: `['allow' => [...], 'ask' => [...], 'deny' => [...]]` |
+| `permission_mode` | string | `'default'` | Permission mode: `default`, `auto`, `strict`, `readonly` |
+| `auto_approve` | bool\|array\|null | `null` | Auto-approve tools: `true` (all), `['pattern']` (specific), or `null` (disabled) |
 | `max_iterations` | int\|null | `null` | Override global max_iterations |
 | `system_prompt` | string | `''` | Additional system prompt text |
 | `cancellation_timeout_ms` | int | `0` | Auto-cancel after N ms (0 = disabled) |

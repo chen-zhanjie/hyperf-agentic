@@ -28,5 +28,6 @@ enum AgentEventType: string
 
     case TOOL_BLOCKED = 'tool_blocked';
     case TOOL_DENIED = 'tool_denied';
+    case TOOL_AUTO_APPROVED = 'tool_auto_approved';
     case GUARDRAIL_DECISION = 'guardrail_decision';
 }

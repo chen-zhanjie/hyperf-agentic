@@ -88,6 +88,8 @@ return [
 | `guardrails` | string[] | `[]` | 护栏白名单（空数组 = 全局生效） |
 | `guardrail_modes` | array | `[]` | 护栏模式覆盖：`['name' => 'async']` |
 | `tool_permissions` | array | `[]` | 权限规则：`['allow' => [...], 'ask' => [...], 'deny' => [...]]` |
+| `permission_mode` | string | `'default'` | 权限模式：`default`、`auto`、`strict`、`readonly` |
+| `auto_approve` | bool\|array\|null | `null` | 自动审批工具：`true`（全部）、`['pattern']`（指定模式）或 `null`（禁用） |
 | `max_iterations` | int\|null | `null` | 覆盖全局 max_iterations |
 | `system_prompt` | string | `''` | 附加系统提示文本 |
 | `cancellation_timeout_ms` | int | `0` | 自动取消超时（毫秒，0 = 禁用） |

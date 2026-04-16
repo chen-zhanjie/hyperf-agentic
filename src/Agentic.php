@@ -5,6 +5,7 @@ namespace ChenZhanjie\Agentic;
 
 use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
 use ChenZhanjie\Agentic\Contract\MessageStoreInterface;
+use ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface;
 use ChenZhanjie\Agentic\Contract\SessionStoreInterface;
 use ChenZhanjie\Agentic\Event\EventEmitter;
 use ChenZhanjie\Agentic\Persona\Persona;
@@ -24,6 +25,7 @@ class Agentic
         private readonly PromptBuilder $promptBuilder,
         private readonly ?SessionStoreInterface $sessionStore = null,
         private readonly ?MessageStoreInterface $messageStore = null,
+        private readonly ?PermissionApprovalStoreInterface $approvalStore = null,
         private readonly array $agentDefs = [],
         private readonly array $defaults = [],
     ) {
@@ -183,6 +185,56 @@ class Agentic
     public function setHumanInputResolver(HumanInputResolverInterface $resolver): void
     {
         $this->runner->setHumanInputResolver($resolver);
+    }
+
+    // ── Permission Approval API ──
+
+    /**
+     * Approve all tools globally or for a specific session.
+     */
+    public function approveAll(?string $sessionId = null): void
+    {
+        $this->approvalStore?->approveAll($sessionId);
+    }
+
+    /**
+     * Approve a specific tool or pattern globally or for a session.
+     */
+    public function approveTool(string $toolOrPattern, ?string $sessionId = null): void
+    {
+        $this->approvalStore?->approve($toolOrPattern, $sessionId);
+    }
+
+    /**
+     * Revoke all approvals globally or for a session.
+     */
+    public function revokeAll(?string $sessionId = null): void
+    {
+        $this->approvalStore?->revokeAll($sessionId);
+    }
+
+    /**
+     * @deprecated Use approveTool($toolOrPattern, $sessionId) instead.
+     */
+    public function approveToolForSession(string $toolOrPattern, string $sessionId): void
+    {
+        $this->approveTool($toolOrPattern, $sessionId);
+    }
+
+    /**
+     * @deprecated Use approveAll($sessionId) instead.
+     */
+    public function approveAllForSession(string $sessionId): void
+    {
+        $this->approveAll($sessionId);
+    }
+
+    /**
+     * Revoke a specific approval.
+     */
+    public function revokeTool(string $toolOrPattern, ?string $sessionId = null): void
+    {
+        $this->approvalStore?->revoke($toolOrPattern, $sessionId);
     }
 
     /**
