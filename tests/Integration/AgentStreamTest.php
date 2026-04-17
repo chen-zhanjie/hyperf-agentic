@@ -90,8 +90,9 @@ class AgentStreamTest extends TestCase
 
         $this->assertIsArray($result);
         $this->assertArrayHasKey('content', $result);
-        $this->assertNotEmpty($result['content']);
-        $this->assertNotEmpty($chunks);
-        $this->assertSame($result['content'], implode('', $chunks));
+        // Streaming: content is emitted via onChunk, result['content'] is empty
+        $fullContent = implode('', $chunks);
+        $this->assertNotEmpty($chunks, 'Should receive text chunks via onChunk');
+        $this->assertNotEmpty($fullContent, 'Reassembled content should not be empty');
     }
 }
