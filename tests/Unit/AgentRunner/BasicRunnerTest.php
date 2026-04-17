@@ -8,6 +8,7 @@ use ChenZhanjie\Agentic\AgentResult;
 use ChenZhanjie\Agentic\Contract\MiddlewareInterface;
 use ChenZhanjie\Agentic\Contract\SkillInterface;
 use ChenZhanjie\Agentic\GuardrailRunner;
+use ChenZhanjie\Agentic\LlmCallMeta;
 use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
@@ -139,7 +140,7 @@ class BasicRunnerTest extends TestCase
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
             public function beforeLlmCall(array $messages, array $options): array { return $options; }
-            public function afterLlmCall(array $response, array $usage): void {}
+            public function afterLlmCall(array $response, LlmCallMeta $meta): void {}
             public function beforeToolCall(string $name, array $arguments): ?string
             {
                 if ($name === 'dangerous') {

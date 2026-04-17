@@ -264,6 +264,10 @@ class AgentRunner
 
         $messages = $this->middleware->beforeLoop($messages, $agentConfig);
 
+        // Inject resolved model/provider into options for downstream consumers (e.g., LlmCallMeta)
+        $options['model'] = $options['model'] ?? $options['model_override'] ?? $agentConfig['model'] ?? '';
+        $options['provider'] = $options['provider'] ?? $agentConfig['provider'] ?? '';
+
         $fullMessages = array_merge(
             [['role' => 'system', 'content' => $systemMessage]],
             $messages,

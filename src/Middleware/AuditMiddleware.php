@@ -5,6 +5,7 @@ namespace ChenZhanjie\Agentic\Middleware;
 
 use ChenZhanjie\Agentic\AgentResult;
 use ChenZhanjie\Agentic\Contract\MiddlewareInterface;
+use ChenZhanjie\Agentic\LlmCallMeta;
 
 /**
  * Audit middleware — logs all tool calls with PII redaction.
@@ -38,7 +39,7 @@ class AuditMiddleware implements MiddlewareInterface
         return $options;
     }
 
-    public function afterLlmCall(array $response, array $usage): void {}
+    public function afterLlmCall(array $response, LlmCallMeta $meta): void {}
 
     public function beforeToolCall(string $name, array $arguments): ?string
     {

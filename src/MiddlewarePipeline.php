@@ -4,11 +4,20 @@ declare(strict_types=1);
 namespace ChenZhanjie\Agentic;
 
 use ChenZhanjie\Agentic\Contract\MiddlewareInterface;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 class MiddlewarePipeline
 {
     /** @var MiddlewareInterface[] */
     private array $middlewares = [];
+
+    private LoggerInterface $logger;
+
+    public function __construct(?LoggerInterface $logger = null)
+    {
+        $this->logger = $logger ?? new NullLogger();
+    }
 
     public function add(MiddlewareInterface $middleware): void
     {
@@ -32,7 +41,13 @@ class MiddlewarePipeline
     public function afterLoop(AgentResult $result): AgentResult
     {
         foreach ($this->middlewares as $mw) {
-            $result = $mw->afterLoop($result);
+            try {
+                $result = $mw->afterLoop($result);
+            } catch (\Throwable $e) {
+                $this->logger->warning('Middleware afterLoop error: ' . $e->getMessage(), [
+                    'middleware' => get_class($mw),
+                ]);
+            }
         }
         return $result;
     }
@@ -51,10 +66,16 @@ class MiddlewarePipeline
     /**
      * Execute afterLlmCall chain — notification only.
      */
-    public function afterLlmCall(array $response, array $usage): void
+    public function afterLlmCall(array $response, LlmCallMeta $meta): void
     {
         foreach ($this->middlewares as $mw) {
-            $mw->afterLlmCall($response, $usage);
+            try {
+                $mw->afterLlmCall($response, $meta);
+            } catch (\Throwable $e) {
+                $this->logger->warning('Middleware afterLlmCall error: ' . $e->getMessage(), [
+                    'middleware' => get_class($mw),
+                ]);
+            }
         }
     }
 
@@ -78,7 +99,13 @@ class MiddlewarePipeline
     public function afterToolCall(string $name, array $arguments, string $result): void
     {
         foreach ($this->middlewares as $mw) {
-            $mw->afterToolCall($name, $arguments, $result);
+            try {
+                $mw->afterToolCall($name, $arguments, $result);
+            } catch (\Throwable $e) {
+                $this->logger->warning('Middleware afterToolCall error: ' . $e->getMessage(), [
+                    'middleware' => get_class($mw),
+                ]);
+            }
         }
     }
 }

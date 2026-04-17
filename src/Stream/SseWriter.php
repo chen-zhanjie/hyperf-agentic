@@ -75,6 +75,11 @@ class SseWriter
 
     /**
      * Emit the finish chunk with usage and [DONE] sentinel.
+     *
+     * Internally calls done(), so there is no need to call done() separately.
+     *
+     * @param array $usage Token usage: `['prompt_tokens' => int, 'completion_tokens' => int]`
+     * @param string $finishReason One of: 'stop', 'length', 'content_filter', 'tool_calls'
      */
     public function finish(array $usage = [], string $finishReason = 'stop'): void
     {

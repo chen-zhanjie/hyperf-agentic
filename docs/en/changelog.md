@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-04-17
+
+### Added
+
+- **`LlmCallMeta` DTO** — Readonly DTO passed to `MiddlewareInterface::afterLlmCall()` containing `provider`, `model`, `promptTokens`, `completionTokens`, and `totalTokens`
+- **`LlmResponse` DTO** — Readonly DTO returned by `Agentic::chat()` and `Agentic::chatStream()` with `content`, `usage`, `model`, `provider`, `reasoningContent`, `toolCalls`, and `toArray()` for backward compat
+- **Middleware fault tolerance** — Notification methods (`afterLoop`, `afterLlmCall`, `afterToolCall`) now catch exceptions and continue, instead of breaking the agent loop. Chain methods (`beforeLoop`, `beforeLlmCall`) still throw on failure
+
+### Changed
+
+- **BREAKING:** `MiddlewareInterface::afterLlmCall(array $response, array $usage)` → `afterLlmCall(array $response, LlmCallMeta $meta)`. Any middleware implementing the old signature must update
+- **BREAKING:** `Agentic::chat()` and `chatStream()` now return `LlmResponse` instead of `array`. Use `$result->content` or `$result->toArray()` for backward compat
+- `AuditMiddleware::afterLlmCall` updated to use `LlmCallMeta`
+- `AgentRunner` now injects resolved `model` and `provider` into options before passing to `TurnExecutor`
+- `SseWriter::finish()` PHPDoc improved to clarify it internally calls `done()`
+
 ## [0.8.3] - 2026-04-17
 
 ### Added

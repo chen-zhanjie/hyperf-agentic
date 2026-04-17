@@ -213,20 +213,31 @@ public function runStreamWithConfig(
 纯 LLM 对话，不经过 Agent 循环（不调用工具）。
 
 ```php
-public function chat(array $messages, array $options = []): array
+public function chat(array $messages, array $options = []): LlmResponse
 ```
 
-**返回：** 包含 `content`、`usage` 等键的关联数组
+**返回：** `LlmResponse`（见下方 DTO 部分）
+
+**示例：**
+
+```php
+$response = $this->agentic->chat([
+    ['role' => 'user', 'content' => 'Translate to English: 你好世界'],
+]);
+
+echo $response->content;               // "Hello World"
+echo $response->usage['prompt_tokens']; // Token 用量
+```
 
 ### chatStream()
 
 纯 LLM 流式对话，逐块转发到回调。
 
 ```php
-public function chatStream(array $messages, callable $onChunk, array $options = []): array
+public function chatStream(array $messages, callable $onChunk, array $options = []): LlmResponse
 ```
 
-**返回：** 包含 `content`、`usage` 等键的归一化数组。
+**返回：** `LlmResponse` — 流式完成后拼装的完整响应。
 
 **示例：**
 
@@ -238,7 +249,15 @@ $result = $this->agentic->chatStream($messages, function (array $chunk) {
     }
 });
 
-echo $result['content']; // 完整拼接后的回复
+echo $result->content; // 完整拼接后的回复
+```
+
+使用 `SseWriter` 配合 `chatStream` 时，`finish()` 接受 usage 数组：
+
+```php
+$sse = new SseWriter(fn(string $line) => echo $line, model: 'gpt-4o');
+$result = $agentic->chatStream($messages, $sse->asOnChunk());
+$sse->finish($result->usage);
 ```
 
 ## OpenAI 兼容 SSE 输出
@@ -258,7 +277,7 @@ $result = $agentic->runStream('general', $messages, $sse->asOnEvent());
 ```php
 $sse = new SseWriter(fn(string $line) => echo $line, model: 'gpt-4o');
 $result = $agentic->chatStream($messages, $sse->asOnChunk());
-$sse->finish($result['usage'] ?? []);
+$sse->finish($result->usage);
 ```
 
 **SSE 输出格式：**
@@ -429,3 +448,48 @@ public function revokeAll(?string $sessionId = null): void
 ```php
 $result->toArray(); // 转为关联数组
 ```
+
+## LlmResponse
+
+`chat()` 和 `chatStream()` 返回 `LlmResponse` DTO。
+
+### 公开属性
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `$content` | string | LLM 回复内容 |
+| `$usage` | array | Token 用量：`['prompt_tokens' => int, 'completion_tokens' => int]` |
+| `$model` | ?string | 使用的模型名称 |
+| `$provider` | ?string | 使用的 Provider 名称 |
+| `$reasoningContent` | ?string | 推理过程（如模型支持） |
+| `$toolCalls` | array | 工具调用（如有） |
+
+### 序列化
+
+```php
+$response->toArray(); // 转为关联数组（向后兼容）
+```
+
+## LlmCallMeta
+
+传递给 `MiddlewareInterface::afterLlmCall()` 用于可观测性。
+
+```php
+public function afterLlmCall(array $response, LlmCallMeta $meta): void
+```
+
+### 公开属性
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `$provider` | string | LLM Provider 名称 |
+| `$model` | string | 模型名称 |
+| `$promptTokens` | int | prompt token 消耗 |
+| `$completionTokens` | int | completion token 消耗 |
+| `$totalTokens` | int | 总 token 消耗 |
+
+## 中间件
+
+### 容错机制
+
+通知方法（`afterLoop`、`afterLlmCall`、`afterToolCall`）内部捕获异常并记录警告，不会中断 Agent 循环。链式方法（`beforeLoop`、`beforeLlmCall`）失败时仍然抛出异常，因为它们负责数据变换，必须保证正确性。

@@ -244,6 +244,10 @@ src/
 ├── GuardrailAuditEntry.php  # 审计日志条目
 ├── GuardrailAuditLogger.php # 默认审计日志器
 ├── LlmClient.php      # LLM 客户端
+├── LlmCallMeta.php    # 中间件 LLM 调用元数据 DTO
+├── LlmResponse.php    # 纯 LLM 对话响应 DTO
+├── LlmClientFactory.php   # Hyperf DI 工厂（LlmClient）
 ├── Agentic.php        # Layer 4: 统一门面
+├── AgenticFactory.php # Hyperf DI 工厂（Agentic）
 └── ConfigProvider.php # Hyperf DI 配置
 ```

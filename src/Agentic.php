@@ -34,7 +34,7 @@ class Agentic
     /**
      * Pure LLM chat (passthrough, no agent loop).
      */
-    public function chat(array $messages, array $options = []): array
+    public function chat(array $messages, array $options = []): LlmResponse
     {
         $config = array_merge(
             $this->defaults,
@@ -44,7 +44,16 @@ class Agentic
 
         $result = $this->runner->run($messages, $config, $options);
 
-        return $result->toArray();
+        return new LlmResponse(
+            content: $result->content,
+            usage: [
+                'prompt_tokens' => $result->promptTokens,
+                'completion_tokens' => $result->completionTokens,
+            ],
+            model: $options['model_override'] ?? $config['model'] ?? null,
+            provider: $options['provider'] ?? $config['provider'] ?? null,
+            reasoningContent: $result->reasoningContent,
+        );
     }
 
     /**
@@ -114,7 +123,7 @@ class Agentic
     /**
      * Pure LLM streaming chat — forwards chunks to onChunk callback.
      */
-    public function chatStream(array $messages, callable $onChunk, array $options = []): array
+    public function chatStream(array $messages, callable $onChunk, array $options = []): LlmResponse
     {
         $config = array_merge(
             $this->defaults,
@@ -126,7 +135,16 @@ class Agentic
             'model' => $options['model_override'] ?? $config['model'] ?? null,
         ];
 
-        return $this->runner->chatStream($messages, $llmOptions, $onChunk);
+        $raw = $this->runner->chatStream($messages, $llmOptions, $onChunk);
+
+        return new LlmResponse(
+            content: $raw['content'] ?? '',
+            usage: $raw['usage'] ?? [],
+            model: $llmOptions['model'],
+            provider: $llmOptions['provider'],
+            reasoningContent: $raw['reasoning_content'] ?? null,
+            toolCalls: $raw['tool_calls'] ?? [],
+        );
     }
 
     /**

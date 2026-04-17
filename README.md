@@ -138,6 +138,8 @@ vendor/bin/phpunit
 
 575 tests, 1146 assertions — all passing.
 
+> **Note:** Run `vendor/bin/phpunit` after install. Test count reflects latest version.
+
 ## License
 
 MIT

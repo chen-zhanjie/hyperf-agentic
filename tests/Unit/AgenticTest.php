@@ -91,9 +91,9 @@ class AgenticTest extends TestCase
 
     // ── chat (pure LLM passthrough) ──
 
-    public function testChatReturnsArrayResponse(): void
+    public function testChatReturnsLlmResponse(): void
     {
-        $llm = $this->createMockLlm([['content' => 'plain text response', 'usage' => []]]);
+        $llm = $this->createMockLlm([['content' => 'plain text response', 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5]]]);
         $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
@@ -103,8 +103,10 @@ class AgenticTest extends TestCase
         );
 
         $result = $agentic->chat([['role' => 'user', 'content' => 'hi']]);
-        $this->assertIsArray($result);
-        $this->assertSame('plain text response', $result['content']);
+        $this->assertInstanceOf(\ChenZhanjie\Agentic\LlmResponse::class, $result);
+        $this->assertSame('plain text response', $result->content);
+        $this->assertSame(10, $result->usage['prompt_tokens']);
+        $this->assertSame(5, $result->usage['completion_tokens']);
     }
 
     // ── agents list ──

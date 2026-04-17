@@ -68,7 +68,7 @@ class AgenticStreamTest extends TestCase
             fn(string $chunk) => null,
         );
 
-        $this->assertSame('streamed response', $returned['content']);
+        $this->assertSame('streamed response', $returned->content);
     }
 
     public function testChatStreamWithModelOverride(): void
@@ -88,6 +88,6 @@ class AgenticStreamTest extends TestCase
             ['model_override' => 'gpt-3.5-turbo'],
         );
 
-        $this->assertSame('override response', $returned['content']);
+        $this->assertSame('override response', $returned->content);
     }
 }

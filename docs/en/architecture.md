@@ -246,6 +246,10 @@ src/
 ├── GuardrailAuditEntry.php  # Audit log entry
 ├── GuardrailAuditLogger.php # Default audit logger
 ├── LlmClient.php      # LLM client
+├── LlmCallMeta.php    # Middleware LLM call metadata DTO
+├── LlmResponse.php    # Pure LLM chat response DTO
+├── LlmClientFactory.php   # Hyperf DI factory for LlmClient
 ├── Agentic.php        # Layer 4: Unified facade
+├── AgenticFactory.php # Hyperf DI factory for Agentic
 └── ConfigProvider.php # Hyperf DI config
 ```

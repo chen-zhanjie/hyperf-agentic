@@ -138,6 +138,8 @@ vendor/bin/phpunit
 
 575 个测试，1146 个断言 — 全部通过。
 
+> **注意：** 安装后运行 `vendor/bin/phpunit`。测试数量以最新版本为准。
+
 ## 许可证
 
 MIT

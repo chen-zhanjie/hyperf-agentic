@@ -99,7 +99,15 @@ class TurnExecutor
             'reasoning_content' => $reasoningContent,
         ];
 
-        $this->middleware->afterLlmCall($response, $usage);
+        $promptTokens = (int) ($usage['prompt_tokens'] ?? 0);
+        $completionTokens = (int) ($usage['completion_tokens'] ?? 0);
+        $this->middleware->afterLlmCall($response, new LlmCallMeta(
+            provider: $options['provider'] ?? '',
+            model: $options['model'] ?? '',
+            promptTokens: $promptTokens,
+            completionTokens: $completionTokens,
+            totalTokens: $promptTokens + $completionTokens,
+        ));
 
         // No tool calls → text response → done
         if (empty($toolCalls)) {

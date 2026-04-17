@@ -5,6 +5,7 @@ namespace ChenZhanjie\Agentic\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
 use ChenZhanjie\Agentic\AgentResult;
+use ChenZhanjie\Agentic\LlmCallMeta;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Contract\MiddlewareInterface;
 
@@ -81,7 +82,7 @@ class MiddlewarePipelineTest extends TestCase
                 return $result;
             }
             public function beforeLlmCall(array $messages, array $options): array { return $options; }
-            public function afterLlmCall(array $response, array $usage): void {}
+            public function afterLlmCall(array $response, LlmCallMeta $meta): void {}
             public function beforeToolCall(string $name, array $arguments): ?string { return null; }
             public function afterToolCall(string $name, array $arguments, string $result): void {}
         };
@@ -126,14 +127,14 @@ class MiddlewarePipelineTest extends TestCase
     {
         $mw = new class implements MiddlewareInterface {
             public bool $called = false;
-            public array $capturedUsage = [];
+            public ?LlmCallMeta $capturedMeta = null;
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
             public function beforeLlmCall(array $messages, array $options): array { return $options; }
-            public function afterLlmCall(array $response, array $usage): void
+            public function afterLlmCall(array $response, LlmCallMeta $meta): void
             {
                 $this->called = true;
-                $this->capturedUsage = $usage;
+                $this->capturedMeta = $meta;
             }
             public function beforeToolCall(string $name, array $arguments): ?string { return null; }
             public function afterToolCall(string $name, array $arguments, string $result): void {}
@@ -142,11 +143,16 @@ class MiddlewarePipelineTest extends TestCase
         $pipeline = new MiddlewarePipeline();
         $pipeline->add($mw);
 
-        $usage = ['prompt_tokens' => 100, 'completion_tokens' => 50];
-        $pipeline->afterLlmCall(['content' => 'test'], $usage);
+        $meta = new LlmCallMeta(provider: 'openai', model: 'gpt-4', promptTokens: 100, completionTokens: 50, totalTokens: 150);
+        $pipeline->afterLlmCall(['content' => 'test'], $meta);
 
         $this->assertTrue($mw->called);
-        $this->assertSame($usage, $mw->capturedUsage);
+        $this->assertNotNull($mw->capturedMeta);
+        $this->assertSame('openai', $mw->capturedMeta->provider);
+        $this->assertSame('gpt-4', $mw->capturedMeta->model);
+        $this->assertSame(100, $mw->capturedMeta->promptTokens);
+        $this->assertSame(50, $mw->capturedMeta->completionTokens);
+        $this->assertSame(150, $mw->capturedMeta->totalTokens);
     }
 
     // ── beforeToolCall ──
@@ -182,7 +188,7 @@ class MiddlewarePipelineTest extends TestCase
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
             public function beforeLlmCall(array $messages, array $options): array { return $options; }
-            public function afterLlmCall(array $response, array $usage): void {}
+            public function afterLlmCall(array $response, LlmCallMeta $meta): void {}
             public function beforeToolCall(string $name, array $arguments): ?string
             {
                 $this->called = true;
@@ -211,7 +217,7 @@ class MiddlewarePipelineTest extends TestCase
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
             public function beforeLlmCall(array $messages, array $options): array { return $options; }
-            public function afterLlmCall(array $response, array $usage): void {}
+            public function afterLlmCall(array $response, LlmCallMeta $meta): void {}
             public function beforeToolCall(string $name, array $arguments): ?string { return null; }
             public function afterToolCall(string $name, array $arguments, string $result): void
             {
@@ -285,10 +291,10 @@ class MiddlewarePipelineTest extends TestCase
                 return $options;
             }
 
-            public function afterLlmCall(array $response, array $usage): void
+            public function afterLlmCall(array $response, LlmCallMeta $meta): void
             {
                 if ($this->targetMethod === 'afterLlmCall') {
-                    ($this->behavior)($response, $usage);
+                    ($this->behavior)($response, $meta);
                 }
             }
 
@@ -324,9 +330,80 @@ class MiddlewarePipelineTest extends TestCase
             }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
             public function beforeLlmCall(array $messages, array $options): array { return $options; }
-            public function afterLlmCall(array $response, array $usage): void {}
+            public function afterLlmCall(array $response, LlmCallMeta $meta): void {}
             public function beforeToolCall(string $name, array $arguments): ?string { return null; }
             public function afterToolCall(string $name, array $arguments, string $result): void {}
         };
+    }
+
+    // ── Fault tolerance ──
+
+    public function testNotificationMethodsCatchExceptionsAndContinue(): void
+    {
+        $order = [];
+
+        $failingMw = new class($order) implements MiddlewareInterface {
+            public function __construct(private array &$order) {}
+            public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
+            public function afterLoop(AgentResult $result): AgentResult
+            {
+                $this->order[] = 'failing_afterLoop';
+                throw new \RuntimeException('afterLoop explosion');
+            }
+            public function beforeLlmCall(array $messages, array $options): array { return $options; }
+            public function afterLlmCall(array $response, LlmCallMeta $meta): void
+            {
+                $this->order[] = 'failing_afterLlmCall';
+                throw new \RuntimeException('afterLlmCall explosion');
+            }
+            public function beforeToolCall(string $name, array $arguments): ?string { return null; }
+            public function afterToolCall(string $name, array $arguments, string $result): void
+            {
+                $this->order[] = 'failing_afterToolCall';
+                throw new \RuntimeException('afterToolCall explosion');
+            }
+        };
+
+        $goodMw = new class($order) implements MiddlewareInterface {
+            public function __construct(private array &$order) {}
+            public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
+            public function afterLoop(AgentResult $result): AgentResult
+            {
+                $this->order[] = 'good_afterLoop';
+                return $result;
+            }
+            public function beforeLlmCall(array $messages, array $options): array { return $options; }
+            public function afterLlmCall(array $response, LlmCallMeta $meta): void
+            {
+                $this->order[] = 'good_afterLlmCall';
+            }
+            public function beforeToolCall(string $name, array $arguments): ?string { return null; }
+            public function afterToolCall(string $name, array $arguments, string $result): void
+            {
+                $this->order[] = 'good_afterToolCall';
+            }
+        };
+
+        $pipeline = new MiddlewarePipeline();
+        $pipeline->add($failingMw);
+        $pipeline->add($goodMw);
+
+        // afterLoop — failing middleware throws, but good middleware still runs
+        $result = $pipeline->afterLoop(AgentResult::complete('ok'));
+        $this->assertTrue($result->isComplete());
+
+        // afterLlmCall — both run despite exception
+        $meta = new LlmCallMeta(provider: 'test', model: 'test', promptTokens: 0, completionTokens: 0, totalTokens: 0);
+        $pipeline->afterLlmCall(['content' => 'test'], $meta);
+
+        // afterToolCall — both run despite exception
+        $pipeline->afterToolCall('search', [], 'result');
+
+        $this->assertContains('failing_afterLoop', $order);
+        $this->assertContains('good_afterLoop', $order);
+        $this->assertContains('failing_afterLlmCall', $order);
+        $this->assertContains('good_afterLlmCall', $order);
+        $this->assertContains('failing_afterToolCall', $order);
+        $this->assertContains('good_afterToolCall', $order);
     }
 }

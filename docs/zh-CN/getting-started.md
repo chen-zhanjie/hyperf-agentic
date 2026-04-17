@@ -107,7 +107,8 @@ class ChatController
 $response = $this->agentic->chat([
     ['role' => 'user', 'content' => 'Translate to English: 你好世界'],
 ]);
-// $response 是字符串
+// $response 是 LlmResponse DTO
+echo $response->content; // "Hello World"
 ```
 
 ## 本地调试 CLI

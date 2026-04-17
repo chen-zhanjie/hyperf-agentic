@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-04-17
+
+### 新增
+
+- **`LlmCallMeta` DTO** — 只读 DTO，传递给 `MiddlewareInterface::afterLlmCall()`，包含 `provider`、`model`、`promptTokens`、`completionTokens` 和 `totalTokens`
+- **`LlmResponse` DTO** — 只读 DTO，由 `Agentic::chat()` 和 `Agentic::chatStream()` 返回，包含 `content`、`usage`、`model`、`provider`、`reasoningContent`、`toolCalls`，以及用于向后兼容的 `toArray()`
+- **中间件容错** — 通知方法（`afterLoop`、`afterLlmCall`、`afterToolCall`）现在捕获异常并继续执行，而不是中断 Agent 循环。链式方法（`beforeLoop`、`beforeLlmCall`）失败时仍然抛出异常
+
+### 变更
+
+- **破坏性变更：** `MiddlewareInterface::afterLlmCall(array $response, array $usage)` → `afterLlmCall(array $response, LlmCallMeta $meta)`。实现旧签名的中间件必须更新
+- **破坏性变更：** `Agentic::chat()` 和 `chatStream()` 现在返回 `LlmResponse` 而非 `array`。使用 `$result->content` 或 `$result->toArray()` 实现向后兼容
+- `AuditMiddleware::afterLlmCall` 更新为使用 `LlmCallMeta`
+- `AgentRunner` 现在在传递给 `TurnExecutor` 之前将已解析的 `model` 和 `provider` 注入到 options 中
+- `SseWriter::finish()` PHPDoc 改进，明确说明内部调用 `done()`
+
 ## [0.8.3] - 2026-04-17
 
 ### 新增

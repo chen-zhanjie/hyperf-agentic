@@ -115,7 +115,7 @@ For pure LLM chat streaming:
 ```php
 $sse = new SseWriter(fn(string $line) => echo $line, model: 'gpt-4o');
 $result = $agentic->chatStream($messages, $sse->asOnChunk());
-$sse->finish($result['usage'] ?? []);
+$sse->finish($result->usage);
 ```
 
 **SSE output format:**
@@ -227,20 +227,31 @@ public function runStreamWithConfig(
 Pure LLM chat without the agent loop (no tool calls).
 
 ```php
-public function chat(array $messages, array $options = []): array
+public function chat(array $messages, array $options = []): LlmResponse
 ```
 
-**Returns:** Array with `content`, `usage`, and optional `tool_calls` keys.
+**Returns:** `LlmResponse` (see DTO section below)
+
+**Example:**
+
+```php
+$response = $this->agentic->chat([
+    ['role' => 'user', 'content' => 'Translate to English: 你好世界'],
+]);
+
+echo $response->content;              // "Hello World"
+echo $response->usage['prompt_tokens']; // Token usage
+```
 
 ### chatStream()
 
 Pure LLM streaming chat, forwarding chunks to a callback.
 
 ```php
-public function chatStream(array $messages, callable $onChunk, array $options = []): array
+public function chatStream(array $messages, callable $onChunk, array $options = []): LlmResponse
 ```
 
-**Returns:** Normalized array with `content`, `usage`, and optional keys.
+**Returns:** `LlmResponse` — the fully assembled response after streaming completes.
 
 **Example:**
 
@@ -252,7 +263,15 @@ $result = $this->agentic->chatStream($messages, function (array $chunk) {
     }
 });
 
-echo $result['content']; // Full assembled response
+echo $result->content; // Full assembled response
+```
+
+When using `SseWriter` with `chatStream`, note that `finish()` accepts a usage array:
+
+```php
+$sse = new SseWriter(fn(string $line) => echo $line, model: 'gpt-4o');
+$result = $agentic->chatStream($messages, $sse->asOnChunk());
+$sse->finish($result->usage);
 ```
 
 ## Session Resume
@@ -388,3 +407,48 @@ All `run*` methods return an `AgentResult` object.
 ```php
 $result->toArray(); // Convert to associative array
 ```
+
+## LlmResponse
+
+`chat()` and `chatStream()` return a `LlmResponse` DTO.
+
+### Public Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `$content` | string | LLM response text |
+| `$usage` | array | Token usage: `['prompt_tokens' => int, 'completion_tokens' => int]` |
+| `$model` | ?string | Model name used |
+| `$provider` | ?string | Provider name used |
+| `$reasoningContent` | ?string | Reasoning content (if model supports it) |
+| `$toolCalls` | array | Tool calls (if any) |
+
+### Serialization
+
+```php
+$response->toArray(); // Convert to associative array (backward compat)
+```
+
+## LlmCallMeta
+
+Passed to `MiddlewareInterface::afterLlmCall()` for observability.
+
+```php
+public function afterLlmCall(array $response, LlmCallMeta $meta): void
+```
+
+### Public Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `$provider` | string | LLM provider name |
+| `$model` | string | Model name |
+| `$promptTokens` | int | Prompt tokens consumed |
+| `$completionTokens` | int | Completion tokens consumed |
+| `$totalTokens` | int | Total tokens |
+
+## Middleware
+
+### Fault Tolerance
+
+Notification methods (`afterLoop`, `afterLlmCall`, `afterToolCall`) catch exceptions internally and log a warning without breaking the agent loop. Chain methods (`beforeLoop`, `beforeLlmCall`) still throw on failure since they transform data and must be correct.
