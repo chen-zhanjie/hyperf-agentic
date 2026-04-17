@@ -42,6 +42,9 @@ class Agentic
             ['max_iterations' => 1, 'tools' => []],
         );
 
+        $options['model'] = $options['model'] ?? $options['model_override'] ?? $config['model'] ?? null;
+        $options['provider'] = $options['provider'] ?? $config['provider'] ?? null;
+
         $result = $this->runner->run($messages, $config, $options);
 
         return new LlmResponse(
