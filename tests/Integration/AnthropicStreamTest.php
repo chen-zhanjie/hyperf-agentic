@@ -5,7 +5,6 @@ namespace ChenZhanjie\Agentic\Tests\Integration;
 
 use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\GuardrailRunner;
-use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
@@ -21,34 +20,10 @@ use PHPUnit\Framework\TestCase;
  */
 class AnthropicStreamTest extends TestCase
 {
-    private static function skipIfNoKey(): void
-    {
-        $key = getenv('AGENTIC_TEST_API_KEY');
-        if ($key === false || $key === 'sk-your-api-key-here') {
-            static::markTestSkipped('AGENTIC_TEST_API_KEY not configured — set it in .env.test');
-        }
-    }
-
-    private function createAnthropicClient(): LlmClient
-    {
-        return new LlmClient(
-            providerConfigs: [
-                'anthropic' => [
-                    'protocol' => 'anthropic',
-                    'base_url' => 'https://api.xiaomimimo.com/anthropic/v1',
-                    'api_key' => getenv('AGENTIC_TEST_API_KEY'),
-                    'model' => 'mimo-v2-pro',
-                ],
-            ],
-            defaultProvider: 'anthropic',
-            retryConfig: ['max_attempts' => 2, 'base_delay_ms' => 1000, 'max_delay_ms' => 5000],
-        );
-    }
-
     private function createRunner(): AgentRunner
     {
         return new AgentRunner(
-            llmClient: $this->createAnthropicClient(),
+            llmClient: IntegrationTestConfig::createAnthropicLlmClient(),
             promptBuilder: new PromptBuilder(),
             toolRegistry: new ToolRegistry(),
             guardrailRunner: new GuardrailRunner(),
@@ -60,8 +35,8 @@ class AnthropicStreamTest extends TestCase
 
     public function testAnthropicChatStreamReturnsNormalizedArray(): void
     {
-        self::skipIfNoKey();
-        $client = $this->createAnthropicClient();
+        IntegrationTestConfig::skipIfNoAnthropicKey();
+        $client = IntegrationTestConfig::createAnthropicLlmClient();
 
         $chunks = [];
         $onChunk = function (array $chunk) use (&$chunks): void {
@@ -85,7 +60,7 @@ class AnthropicStreamTest extends TestCase
 
     public function testAnthropicRunStreamEmitsTextDeltaAndComplete(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoAnthropicKey();
         $runner = $this->createRunner();
 
         $events = [];

@@ -5,7 +5,6 @@ namespace ChenZhanjie\Agentic\Tests\Integration;
 
 use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\GuardrailRunner;
-use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
@@ -19,34 +18,10 @@ use PHPUnit\Framework\TestCase;
  */
 class AgentStreamTest extends TestCase
 {
-    private static function skipIfNoKey(): void
-    {
-        $key = getenv('AGENTIC_TEST_API_KEY');
-        if ($key === false || $key === 'sk-your-api-key-here') {
-            static::markTestSkipped('AGENTIC_TEST_API_KEY not configured — set it in .env.test');
-        }
-    }
-
-    private function createLlmClient(): LlmClient
-    {
-        return new LlmClient(
-            providerConfigs: [
-                'test' => [
-                    'protocol' => 'openai',
-                    'base_url' => getenv('AGENTIC_TEST_API_BASE') ?: 'https://api.xiaomimimo.com/v1',
-                    'api_key' => getenv('AGENTIC_TEST_API_KEY'),
-                    'model' => getenv('AGENTIC_TEST_MODEL') ?: 'mimo-v2-pro',
-                ],
-            ],
-            defaultProvider: 'test',
-            retryConfig: ['max_attempts' => 2, 'base_delay_ms' => 1000, 'max_delay_ms' => 5000],
-        );
-    }
-
     private function createRunner(): AgentRunner
     {
         return new AgentRunner(
-            llmClient: $this->createLlmClient(),
+            llmClient: IntegrationTestConfig::createOpenAiLlmClient(),
             promptBuilder: new PromptBuilder(),
             toolRegistry: new ToolRegistry(),
             guardrailRunner: new GuardrailRunner(),
@@ -58,7 +33,7 @@ class AgentStreamTest extends TestCase
 
     public function testRunStreamEmitsTextDeltaAndComplete(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
         $runner = $this->createRunner();
 
         $events = [];
@@ -97,7 +72,7 @@ class AgentStreamTest extends TestCase
 
     public function testChatStreamReturnsNormalizedArray(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
         $runner = $this->createRunner();
 
         $chunks = [];

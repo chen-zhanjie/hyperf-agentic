@@ -9,7 +9,6 @@ use ChenZhanjie\Agentic\Contract\ToolInterface;
 use ChenZhanjie\Agentic\GuardrailResult;
 use ChenZhanjie\Agentic\GuardrailRunner;
 use ChenZhanjie\Agentic\GuardrailMode;
-use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\PermissionApprovalStore;
@@ -24,37 +23,13 @@ use PHPUnit\Framework\TestCase;
  */
 class AgentLifecycleTest extends TestCase
 {
-    private static function skipIfNoKey(): void
-    {
-        $key = getenv('AGENTIC_TEST_API_KEY');
-        if ($key === false || $key === 'sk-your-api-key-here') {
-            static::markTestSkipped('AGENTIC_TEST_API_KEY not configured — set it in .env.test');
-        }
-    }
-
-    private function createLlmClient(): LlmClient
-    {
-        return new LlmClient(
-            providerConfigs: [
-                'test' => [
-                    'protocol' => 'openai',
-                    'base_url' => getenv('AGENTIC_TEST_API_BASE') ?: 'https://api.xiaomimimo.com/v1',
-                    'api_key' => getenv('AGENTIC_TEST_API_KEY'),
-                    'model' => getenv('AGENTIC_TEST_MODEL') ?: 'mimo-v2-pro',
-                ],
-            ],
-            defaultProvider: 'test',
-            retryConfig: ['max_attempts' => 2, 'base_delay_ms' => 1000, 'max_delay_ms' => 5000],
-        );
-    }
-
     private function createRunner(
         ?ToolRegistry $registry = null,
         ?GuardrailRunner $guardrails = null,
         bool $withApprovalStore = false,
     ): AgentRunner {
         return new AgentRunner(
-            llmClient: $this->createLlmClient(),
+            llmClient: IntegrationTestConfig::createOpenAiLlmClient(),
             promptBuilder: new PromptBuilder(),
             toolRegistry: $registry ?? new ToolRegistry(),
             guardrailRunner: $guardrails ?? new GuardrailRunner(),
@@ -131,7 +106,7 @@ class AgentLifecycleTest extends TestCase
 
     public function testMultiToolAgentLifecycle(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
 
         $registry = new ToolRegistry();
         $this->registerTimeTool($registry);
@@ -161,7 +136,7 @@ class AgentLifecycleTest extends TestCase
 
     public function testBudgetExhaustionWithGraceTurn(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
 
         $registry = new ToolRegistry();
         $this->registerTimeTool($registry);
@@ -193,7 +168,7 @@ class AgentLifecycleTest extends TestCase
 
     public function testInputGuardrailBlocksAgent(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
 
         $guardrails = new GuardrailRunner();
         $guardrails->register(
@@ -237,7 +212,7 @@ class AgentLifecycleTest extends TestCase
 
     public function testOutputGuardrailBlocksResponse(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
 
         $guardrails = new GuardrailRunner();
         $guardrails->register(
@@ -283,7 +258,7 @@ class AgentLifecycleTest extends TestCase
 
     public function testToolPermissionDenyFlow(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
 
         $registry = new ToolRegistry();
         $this->registerTimeTool($registry);
@@ -316,7 +291,7 @@ class AgentLifecycleTest extends TestCase
 
     public function testStreamingEventsLifecycle(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
 
         $registry = new ToolRegistry();
         $this->registerTimeTool($registry);
@@ -372,7 +347,7 @@ class AgentLifecycleTest extends TestCase
 
     public function testAutoApprovePermissionMode(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
 
         $registry = new ToolRegistry();
         $this->registerTimeTool($registry);

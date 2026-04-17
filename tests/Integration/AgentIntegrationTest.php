@@ -6,7 +6,6 @@ namespace ChenZhanjie\Agentic\Tests\Integration;
 use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\Contract\ToolInterface;
 use ChenZhanjie\Agentic\GuardrailRunner;
-use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
@@ -20,34 +19,10 @@ use PHPUnit\Framework\TestCase;
  */
 class AgentIntegrationTest extends TestCase
 {
-    private static function skipIfNoKey(): void
-    {
-        $key = getenv('AGENTIC_TEST_API_KEY');
-        if ($key === false || $key === 'sk-your-api-key-here') {
-            static::markTestSkipped('AGENTIC_TEST_API_KEY not configured — set it in .env.test');
-        }
-    }
-
-    private function createLlmClient(): LlmClient
-    {
-        return new LlmClient(
-            providerConfigs: [
-                'test' => [
-                    'protocol' => 'openai',
-                    'base_url' => getenv('AGENTIC_TEST_API_BASE') ?: 'https://api.xiaomimimo.com/v1',
-                    'api_key' => getenv('AGENTIC_TEST_API_KEY'),
-                    'model' => getenv('AGENTIC_TEST_MODEL') ?: 'mimo-v2-pro',
-                ],
-            ],
-            defaultProvider: 'test',
-            retryConfig: ['max_attempts' => 2, 'base_delay_ms' => 1000, 'max_delay_ms' => 5000],
-        );
-    }
-
     private function createRunner(?ToolRegistry $registry = null): AgentRunner
     {
         return new AgentRunner(
-            llmClient: $this->createLlmClient(),
+            llmClient: IntegrationTestConfig::createOpenAiLlmClient(),
             promptBuilder: new PromptBuilder(),
             toolRegistry: $registry ?? new ToolRegistry(),
             guardrailRunner: new GuardrailRunner(),
@@ -59,7 +34,7 @@ class AgentIntegrationTest extends TestCase
 
     public function testAgentReturnsCompleteResponse(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
         $runner = $this->createRunner();
 
         $result = $runner->run(
@@ -80,9 +55,8 @@ class AgentIntegrationTest extends TestCase
 
     public function testAgentCallsToolAndReturnsFinalAnswer(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
 
-        // Register a real tool
         $registry = new ToolRegistry();
         $registry->register(new class implements ToolInterface {
             public function name(): string { return 'get_time'; }
@@ -124,13 +98,12 @@ class AgentIntegrationTest extends TestCase
 
         $this->assertTrue($result->isComplete());
         $this->assertNotEmpty($result->content);
-        // Should have used at least 1 tool call (2 iterations: tool call + final response)
         $this->assertGreaterThanOrEqual(1, $result->toolCalls);
     }
 
     public function testAgentRecordsTokenUsage(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
         $runner = $this->createRunner();
 
         $result = $runner->run(
@@ -152,7 +125,7 @@ class AgentIntegrationTest extends TestCase
 
     public function testAgentEmitsEvents(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
         $runner = $this->createRunner();
 
         $events = [];

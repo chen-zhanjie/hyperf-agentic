@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic\Tests\Integration;
 
-use ChenZhanjie\Agentic\LlmClient;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -11,34 +10,10 @@ use PHPUnit\Framework\TestCase;
  */
 class LlmIntegrationTest extends TestCase
 {
-    private static function skipIfNoKey(): void
-    {
-        $key = getenv('AGENTIC_TEST_API_KEY');
-        if ($key === false || $key === 'sk-your-api-key-here') {
-            static::markTestSkipped('AGENTIC_TEST_API_KEY not configured — set it in .env.test');
-        }
-    }
-
-    private function createClient(): LlmClient
-    {
-        return new LlmClient(
-            providerConfigs: [
-                'test' => [
-                    'protocol' => 'openai',
-                    'base_url' => getenv('AGENTIC_TEST_API_BASE') ?: 'https://api.xiaomimimo.com/v1',
-                    'api_key' => getenv('AGENTIC_TEST_API_KEY'),
-                    'model' => getenv('AGENTIC_TEST_MODEL') ?: 'mimo-v2-pro',
-                ],
-            ],
-            defaultProvider: 'test',
-            retryConfig: ['max_attempts' => 2, 'base_delay_ms' => 1000, 'max_delay_ms' => 5000],
-        );
-    }
-
     public function testSimpleChatReturnsArrayWithContent(): void
     {
-        self::skipIfNoKey();
-        $client = $this->createClient();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
+        $client = IntegrationTestConfig::createOpenAiLlmClient();
 
         $result = $client->chat([
             ['role' => 'user', 'content' => 'Say exactly "pong" and nothing else.'],
@@ -51,8 +26,8 @@ class LlmIntegrationTest extends TestCase
 
     public function testChatIncludesUsageData(): void
     {
-        self::skipIfNoKey();
-        $client = $this->createClient();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
+        $client = IntegrationTestConfig::createOpenAiLlmClient();
 
         $result = $client->chat([
             ['role' => 'user', 'content' => 'Hi'],
@@ -66,8 +41,8 @@ class LlmIntegrationTest extends TestCase
 
     public function testChatWithSystemPrompt(): void
     {
-        self::skipIfNoKey();
-        $client = $this->createClient();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
+        $client = IntegrationTestConfig::createOpenAiLlmClient();
 
         $result = $client->chat([
             ['role' => 'system', 'content' => 'You must always respond in French.'],
@@ -80,8 +55,8 @@ class LlmIntegrationTest extends TestCase
 
     public function testChatWithToolCall(): void
     {
-        self::skipIfNoKey();
-        $client = $this->createClient();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
+        $client = IntegrationTestConfig::createOpenAiLlmClient();
 
         $tools = [
             [
@@ -117,8 +92,8 @@ class LlmIntegrationTest extends TestCase
 
     public function testMultiTurnConversation(): void
     {
-        self::skipIfNoKey();
-        $client = $this->createClient();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
+        $client = IntegrationTestConfig::createOpenAiLlmClient();
 
         $messages = [
             ['role' => 'user', 'content' => 'My name is Alice.'],

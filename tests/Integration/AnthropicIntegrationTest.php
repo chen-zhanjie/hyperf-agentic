@@ -6,7 +6,6 @@ namespace ChenZhanjie\Agentic\Tests\Integration;
 use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\Contract\ToolInterface;
 use ChenZhanjie\Agentic\GuardrailRunner;
-use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
@@ -22,52 +21,12 @@ use PHPUnit\Framework\TestCase;
  */
 class AnthropicIntegrationTest extends TestCase
 {
-    private static function skipIfNoKey(): void
-    {
-        $key = getenv('AGENTIC_TEST_API_KEY');
-        if ($key === false || $key === 'sk-your-api-key-here') {
-            static::markTestSkipped('AGENTIC_TEST_API_KEY not configured — set it in .env.test');
-        }
-    }
-
-    private function createAnthropicClient(): LlmClient
-    {
-        return new LlmClient(
-            providerConfigs: [
-                'anthropic' => [
-                    'protocol' => 'anthropic',
-                    'base_url' => 'https://api.xiaomimimo.com/anthropic/v1',
-                    'api_key' => getenv('AGENTIC_TEST_API_KEY'),
-                    'model' => 'mimo-v2-pro',
-                ],
-            ],
-            defaultProvider: 'anthropic',
-            retryConfig: ['max_attempts' => 2, 'base_delay_ms' => 1000, 'max_delay_ms' => 5000],
-        );
-    }
-
-    private function createOpenAiClient(): LlmClient
-    {
-        return new LlmClient(
-            providerConfigs: [
-                'openai' => [
-                    'protocol' => 'openai',
-                    'base_url' => 'https://api.xiaomimimo.com/v1',
-                    'api_key' => getenv('AGENTIC_TEST_API_KEY'),
-                    'model' => 'mimo-v2-pro',
-                ],
-            ],
-            defaultProvider: 'openai',
-            retryConfig: ['max_attempts' => 2, 'base_delay_ms' => 1000, 'max_delay_ms' => 5000],
-        );
-    }
-
     // ── Anthropic Protocol: LLM Client ──
 
     public function testAnthropicSimpleChat(): void
     {
-        self::skipIfNoKey();
-        $client = $this->createAnthropicClient();
+        IntegrationTestConfig::skipIfNoAnthropicKey();
+        $client = IntegrationTestConfig::createAnthropicLlmClient();
 
         $result = $client->chat([
             ['role' => 'user', 'content' => 'Say exactly "pong" and nothing else.'],
@@ -80,8 +39,8 @@ class AnthropicIntegrationTest extends TestCase
 
     public function testAnthropicIncludesUsage(): void
     {
-        self::skipIfNoKey();
-        $client = $this->createAnthropicClient();
+        IntegrationTestConfig::skipIfNoAnthropicKey();
+        $client = IntegrationTestConfig::createAnthropicLlmClient();
 
         $result = $client->chat([
             ['role' => 'user', 'content' => 'Hi'],
@@ -94,8 +53,8 @@ class AnthropicIntegrationTest extends TestCase
 
     public function testAnthropicWithSystemPrompt(): void
     {
-        self::skipIfNoKey();
-        $client = $this->createAnthropicClient();
+        IntegrationTestConfig::skipIfNoAnthropicKey();
+        $client = IntegrationTestConfig::createAnthropicLlmClient();
 
         $result = $client->chat([
             ['role' => 'system', 'content' => 'You must always respond in French.'],
@@ -107,8 +66,8 @@ class AnthropicIntegrationTest extends TestCase
 
     public function testAnthropicToolCalling(): void
     {
-        self::skipIfNoKey();
-        $client = $this->createAnthropicClient();
+        IntegrationTestConfig::skipIfNoAnthropicKey();
+        $client = IntegrationTestConfig::createAnthropicLlmClient();
 
         $tools = [
             [
@@ -150,7 +109,7 @@ class AnthropicIntegrationTest extends TestCase
 
     public function testAnthropicAgentWithToolCall(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoAnthropicKey();
 
         $registry = new ToolRegistry();
         $registry->register(new class implements ToolInterface {
@@ -178,9 +137,8 @@ class AnthropicIntegrationTest extends TestCase
             public function isParallelAllowed(): bool { return true; }
         });
 
-        $client = $this->createAnthropicClient();
         $runner = new AgentRunner(
-            llmClient: $client,
+            llmClient: IntegrationTestConfig::createAnthropicLlmClient(),
             promptBuilder: new PromptBuilder(),
             toolRegistry: $registry,
             guardrailRunner: new GuardrailRunner(),
@@ -209,13 +167,14 @@ class AnthropicIntegrationTest extends TestCase
 
     public function testBothProtocolsReturnSameShape(): void
     {
-        self::skipIfNoKey();
+        IntegrationTestConfig::skipIfNoOpenAIKey();
+        IntegrationTestConfig::skipIfNoAnthropicKey();
 
-        $openaiResult = $this->createOpenAiClient()->chat([
+        $openaiResult = IntegrationTestConfig::createOpenAiLlmClient()->chat([
             ['role' => 'user', 'content' => 'Say exactly "test" and nothing else.'],
         ]);
 
-        $anthropicResult = $this->createAnthropicClient()->chat([
+        $anthropicResult = IntegrationTestConfig::createAnthropicLlmClient()->chat([
             ['role' => 'user', 'content' => 'Say exactly "test" and nothing else.'],
         ]);
 
