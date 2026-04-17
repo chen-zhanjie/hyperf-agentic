@@ -44,6 +44,7 @@ class SseWriter
                 'text_delta' => $this->writeContent($payload['content'] ?? ''),
                 'reasoning_delta' => $this->writeReasoning($payload['content'] ?? ''),
                 'tool_call' => $this->writeToolCall($payload),
+                'tool_result' => $this->writeToolResult($payload),
                 'complete' => $this->finish([
                     'prompt_tokens' => $payload['prompt_tokens'] ?? 0,
                     'completion_tokens' => $payload['completion_tokens'] ?? 0,
@@ -166,6 +167,12 @@ class SseWriter
         ];
 
         $this->writeChunk(['tool_calls' => [$toolCall]]);
+    }
+
+    private function writeToolResult(array $payload): void
+    {
+        $data = json_encode($payload, JSON_UNESCAPED_UNICODE);
+        $this->writeRaw("event: tool_result\ndata: {$data}\n\n");
     }
 
     private function ensureRoleSent(): void

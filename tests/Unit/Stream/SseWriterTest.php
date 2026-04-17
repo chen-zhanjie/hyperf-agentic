@@ -24,23 +24,38 @@ class SseWriterTest extends TestCase
 
     /**
      * Helper: parse SSE buffer into individual data payloads.
-     * @return array<int, array{type: string, data: string}>
+     * @return array<int, array{type: string, event: string, data: string}>
      */
     private function parseSse(string $buffer): array
     {
         $chunks = [];
-        $lines = explode("\n\n", $buffer);
-        foreach ($lines as $line) {
-            $line = trim($line);
-            if ($line === '') {
+        $blocks = explode("\n\n", $buffer);
+        foreach ($blocks as $block) {
+            $block = trim($block);
+            if ($block === '') {
                 continue;
             }
-            if ($line === 'data: [DONE]') {
-                $chunks[] = ['type' => 'done', 'data' => ''];
+
+            $eventName = '';
+            $dataLine = '';
+            foreach (explode("\n", $block) as $rawLine) {
+                if (str_starts_with($rawLine, 'event: ')) {
+                    $eventName = substr($rawLine, 7);
+                } elseif (str_starts_with($rawLine, 'data: ')) {
+                    $dataLine = substr($rawLine, 6);
+                }
+            }
+
+            if ($dataLine === '[DONE]') {
+                $chunks[] = ['type' => 'done', 'event' => '', 'data' => ''];
                 continue;
             }
-            if (str_starts_with($line, 'data: ')) {
-                $chunks[] = ['type' => 'chunk', 'data' => substr($line, 6)];
+            if ($dataLine !== '') {
+                $chunks[] = [
+                    'type' => $eventName !== '' ? 'event' : 'chunk',
+                    'event' => $eventName,
+                    'data' => $dataLine,
+                ];
             }
         }
 
@@ -433,5 +448,129 @@ class SseWriterTest extends TestCase
 
         $doneChunk = $chunks[count($chunks) - 1];
         $this->assertSame('done', $doneChunk['type']);
+    }
+
+    // ── tool_result named events ──
+
+    public function testToolResultEmitsNamedSseEvent(): void
+    {
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
+        $onEvent('started', ['agent' => 'Test']);
+        $buf->value = '';
+
+        $onEvent('tool_result', [
+            'call_id' => 'call_abc123',
+            'name' => 'search',
+            'result' => 'Found 3 items',
+            'success' => true,
+        ]);
+
+        $chunks = $this->parseSse($buf->value);
+        $this->assertCount(1, $chunks);
+
+        $this->assertSame('event', $chunks[0]['type']);
+        $this->assertSame('tool_result', $chunks[0]['event']);
+
+        $data = json_decode($chunks[0]['data'], true);
+        $this->assertSame('call_abc123', $data['call_id']);
+        $this->assertSame('search', $data['name']);
+        $this->assertSame('Found 3 items', $data['result']);
+        $this->assertTrue($data['success']);
+    }
+
+    public function testToolResultDoesNotWrapInOpenAiChunkEnvelope(): void
+    {
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
+        $onEvent('started', ['agent' => 'Test']);
+        $buf->value = '';
+
+        $onEvent('tool_result', [
+            'call_id' => 'call_1',
+            'name' => 'read_file',
+            'result' => 'file contents here',
+            'success' => true,
+        ]);
+
+        $chunks = $this->parseSse($buf->value);
+        $this->assertCount(1, $chunks);
+
+        $data = json_decode($chunks[0]['data'], true);
+        $this->assertArrayNotHasKey('object', $data);
+        $this->assertArrayNotHasKey('choices', $data);
+    }
+
+    public function testToolCallAndToolResultBothVisible(): void
+    {
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
+        $onEvent('started', ['agent' => 'Test']);
+        $buf->value = '';
+
+        $onEvent('tool_call', [
+            'call_id' => 'call_x',
+            'name' => 'search',
+            'arguments' => ['q' => 'test'],
+        ]);
+        $onEvent('tool_result', [
+            'call_id' => 'call_x',
+            'name' => 'search',
+            'result' => 'result data',
+            'success' => true,
+        ]);
+
+        $chunks = $this->parseSse($buf->value);
+        $this->assertCount(2, $chunks);
+
+        // First: standard tool_call chunk (no event name)
+        $this->assertSame('chunk', $chunks[0]['type']);
+        $this->assertSame('', $chunks[0]['event']);
+        $tcData = json_decode($chunks[0]['data'], true);
+        $this->assertSame('search', $tcData['choices'][0]['delta']['tool_calls'][0]['function']['name']);
+
+        // Second: named tool_result event
+        $this->assertSame('event', $chunks[1]['type']);
+        $this->assertSame('tool_result', $chunks[1]['event']);
+        $trData = json_decode($chunks[1]['data'], true);
+        $this->assertSame('call_x', $trData['call_id']);
+        $this->assertSame('result data', $trData['result']);
+    }
+
+    public function testMultipleToolResultsEachGetSeparateNamedEvents(): void
+    {
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
+        $onEvent('started', ['agent' => 'Test']);
+        $buf->value = '';
+
+        $onEvent('tool_result', ['call_id' => 'c1', 'name' => 'a', 'result' => 'r1', 'success' => true]);
+        $onEvent('tool_result', ['call_id' => 'c2', 'name' => 'b', 'result' => 'r2', 'success' => true]);
+
+        $chunks = $this->parseSse($buf->value);
+        $this->assertCount(2, $chunks);
+
+        $this->assertSame('tool_result', $chunks[0]['event']);
+        $this->assertSame('tool_result', $chunks[1]['event']);
+
+        $this->assertSame('c1', json_decode($chunks[0]['data'], true)['call_id']);
+        $this->assertSame('c2', json_decode($chunks[1]['data'], true)['call_id']);
+    }
+
+    public function testToolResultWithEmptyPayloadProducesValidEvent(): void
+    {
+        [$writer, $buf] = $this->createWriter();
+        $onEvent = $writer->asOnEvent();
+        $onEvent('started', ['agent' => 'Test']);
+        $buf->value = '';
+
+        $onEvent('tool_result', []);
+
+        $chunks = $this->parseSse($buf->value);
+        $this->assertCount(1, $chunks);
+        $this->assertSame('tool_result', $chunks[0]['event']);
+
+        $data = json_decode($chunks[0]['data'], true);
+        $this->assertIsArray($data);
     }
 }

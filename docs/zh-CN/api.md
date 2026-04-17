@@ -263,15 +263,29 @@ $sse->finish($result['usage'] ?? []);
 
 **SSE 输出格式：**
 
+标准 chunk（role、content、tool_call、finish）使用 OpenAI `data:` 格式：
+
 ```
 data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
 
 data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"你好"}}]}
 
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[...]}}]}
+
 data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{...}}
 
 data: [DONE]
 ```
+
+`tool_result` 事件使用命名 SSE 事件类型，不嵌入 OpenAI chunk 信封：
+
+```
+event: tool_result
+data: {"call_id":"call_abc","name":"search","result":"...","success":true}
+
+```
+
+消费端通过 `EventSource.addEventListener('tool_result', ...)` 接收。标准 OpenAI SDK 解析器会自动忽略命名事件，不影响兼容性。
 
 **结束原因（finish_reason）：**
 
