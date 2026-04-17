@@ -120,15 +120,29 @@ $sse->finish($result['usage'] ?? []);
 
 **SSE output format:**
 
+Standard chunks (role, content, tool_call, finish) use the OpenAI `data:` wire format:
+
 ```
 data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
 
 data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"}}]}
 
+data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[...]}}]}
+
 data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{...}}
 
 data: [DONE]
 ```
+
+`tool_result` events use a named SSE event type to stay outside the OpenAI chunk envelope:
+
+```
+event: tool_result
+data: {"call_id":"call_abc","name":"search","result":"...","success":true}
+
+```
+
+Consumers receive `tool_result` via `EventSource.addEventListener('tool_result', ...)`. Standard OpenAI SDK parsers ignore named events automatically — no compatibility impact.
 
 **Finish reasons:**
 
