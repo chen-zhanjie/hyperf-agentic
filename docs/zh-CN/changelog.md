@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-04-17
+
+### 新增
+
+- **`tool_result` 命名 SSE 事件** — `SseWriter` 现在通过命名 SSE 事件（`event: tool_result\ndata: {...}\n\n`）输出工具执行结果，补全了 tool_call → tool_result 生命周期。标准 OpenAI chunk 不受影响——命名事件会被 OpenAI SDK 解析器自动忽略
+
+## [0.8.1] - 2026-04-17
+
+### 新增
+
+- **Debug CLI** — `debug.php` 用于终端交互式 Agent 调试
+- **同步模式事件** — `TurnExecutor` 现在在同步和流式两种模式下均会发出 `REASONING_DELTA` 和 `TEXT_DELTA` 事件
+- **`ask` 工具选项处理** — 修复 `AskTool` 中的选项解析
+
 ## [0.8.0] - 2026-04-17
 
 ### 新增
