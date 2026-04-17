@@ -110,6 +110,63 @@ $response = $this->agentic->chat([
 // $response 是字符串
 ```
 
+## 本地调试 CLI
+
+SDK 自带独立的 `debug.php` 调试脚本，无需 Hyperf 框架即可在本地快速调试 Agent 功能。支持交互式工具调用、ask 工具的确认/单选/多选，以及流式输出。
+
+### 配置
+
+将 `.env.test.example` 复制为 `.env.test` 并填入 API 凭据：
+
+```bash
+cp .env.test.example .env.test
+# 编辑 .env.test 填入你的 API Key
+```
+
+### 启动会话
+
+```bash
+php debug.php                         # OpenAI 协议，默认模型
+php debug.php --protocol anthropic    # Anthropic 协议
+php debug.php --model gpt-4o-mini     # 指定模型
+php debug.php --stream                # 流式模式
+```
+
+### 会话命令
+
+| 命令 | 说明 |
+|------|------|
+| `/quit`、`/exit` | 退出会话 |
+| `/reset` | 清空对话历史 |
+| `/stream` | 切换流式/非流式模式 |
+| `/model <name>` | 切换模型 |
+
+### 内置工具
+
+调试 CLI 注册了 3 个测试工具：
+
+| 工具 | 说明 |
+|------|------|
+| `get_time` | 获取指定时区的当前时间 |
+| `calculate` | 计算数学表达式 |
+| `ask` | 交互式用户输入（确认 / 单选 / 多选 / 文本） |
+
+### 示例提示词
+
+使用以下提示词体验不同的交互场景：
+
+| 场景 | 提示词 | 预期行为 |
+|------|--------|----------|
+| 工具调用 | `现在几点了？北京时间` | 调用 `get_time`，传入 `Asia/Shanghai` |
+| 数学计算 | `计算 123 * 456 + 789` | 调用 `calculate` |
+| 确认 | `确认删除所有临时文件` | 通过 `ask` 弹出确认提示 (confirm) |
+| 单选 | `帮我从美式、拿铁、卡布奇诺里选一杯咖啡` | 通过 `ask` 显示单选菜单 (select) |
+| 多选 | `我想吃水果，从苹果、香蕉、橙子、葡萄里帮我挑几种` | 通过 `ask` 显示多选菜单 (multiselect) |
+| 多工具 | `帮我算一下 (15 + 27) * 3，然后告诉我现在是几点` | 先调用 `calculate` 再调用 `get_time` |
+| 流式体验 | 先输入 `/stream`，再正常对话 | 实时逐 token 输出，含推理过程 |
+
+> **注意：** LLM 自行决定调用哪个工具以及如何构造 `ask` 字段。不同模型的工具调用模式可能略有差异。以上提示词经过验证，能可靠触发对应的交互类型。
+
 ## 下一步
 
 - [配置参考](configuration.md) — 详细的配置项说明

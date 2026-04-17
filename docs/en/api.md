@@ -78,8 +78,8 @@ public function runStream(
 |-------|-------------|
 | `started` | Agent loop started |
 | `thinking` | About to call the LLM |
-| `text_delta` | New text token chunk (`data['content']`) |
-| `reasoning_delta` | Reasoning/thinking token chunk (`data['content']`) |
+| `text_delta` | Text content chunk (`data['content']`), emitted in both sync and stream modes |
+| `reasoning_delta` | Reasoning/thinking content chunk (`data['content']`), emitted in both sync and stream modes |
 | `tool_call` | Tool call dispatched |
 | `tool_result` | Tool result received |
 | `complete` | Agent finished successfully |

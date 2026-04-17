@@ -64,7 +64,7 @@ interface ToolInterface
     public function name(): string;           // Unique tool name
     public function description(): string;    // Description (LLM uses this to decide when to call)
     public function parameters(): array;      // JSON Schema parameter definition
-    public function execute(array $arguments): string|array;  // Execution logic
+    public function execute(array $arguments): string;  // Execution logic
     public function isEnabled(): bool;        // Whether the tool is enabled
     public function isParallelAllowed(): bool; // Whether parallel invocation is allowed
 }
@@ -97,9 +97,7 @@ public function parameters(): array
 
 ### Return Values
 
-`execute()` returns `string` or `array`:
-- `string`: returned directly to the LLM as the tool result
-- `array`: auto-encoded to JSON before returning
+`execute()` must return a `string`. Return JSON-encoded data for structured results.
 
 ## Per-Agent Tool Filtering
 
@@ -147,7 +145,19 @@ $arguments = [
 ];
 ```
 
-Requires a resolver injected via `setHumanInputResolver()`, otherwise errors in non-interactive environments.
+Requires a `HumanInputResolverInterface` implementation injected via `setHumanInputResolver()`. The SDK provides three built-in resolvers:
+
+| Resolver | Environment | Behavior |
+|----------|------------|----------|
+| `CliHumanInputResolver` | CLI (Symfony Console) | Blocking interactive prompts via `SymfonyStyle` |
+| `HttpHumanInputResolver` | HTTP (Hyperf) | Returns a suspended result for frontend resolution |
+| `NullHumanInputResolver` | Testing / non-interactive | Returns default values without prompting |
+
+```php
+use ChenZhanjie\Agentic\Resolver\CliHumanInputResolver;
+
+$runner->setHumanInputResolver(new CliHumanInputResolver($io));
+```
 
 ### SkillTool
 

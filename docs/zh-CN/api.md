@@ -78,8 +78,8 @@ public function runStream(
 |------|------|
 | `started` | Agent 循环开始 |
 | `thinking` | 即将调用 LLM |
-| `text_delta` | 新的文本 token 分片（`data['content']`） |
-| `reasoning_delta` | 推理/思考 token 分片（`data['content']`） |
+| `text_delta` | 文本内容分片（`data['content']`），同步和流式模式下均会触发 |
+| `reasoning_delta` | 推理/思考内容分片（`data['content']`），同步和流式模式下均会触发 |
 | `tool_call` | 工具调用已分发 |
 | `tool_result` | 工具结果已返回 |
 | `complete` | Agent 正常结束 |

@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 新增
 
 - **`SseWriter`** — 轻量 SSE 传输适配器，位于 `src/Stream/SseWriter.php`。将内部事件转换为 OpenAI 兼容的 SSE 格式。Model 从 `started` 事件自动捕获
-- **`reasoning_delta` 事件** — `TurnExecutor` 在流式传输过程中现在会发出 `REASONING_DELTA` 事件，用于推理/思考内容（之前被静默缓冲）
+- **`reasoning_delta` 事件** — `TurnExecutor` 现在在同步和流式两种模式下均会发出 `REASONING_DELTA` 事件，用于推理/思考内容（之前仅在流式模式下可用，且被静默缓冲）
+- **`text_delta` 事件同步模式支持** — `TurnExecutor` 现在在同步和流式两种模式下均会发出 `TEXT_DELTA` 事件（之前仅在流式模式下可用）。同步模式下以完整内容单次发出
 - **`started` 事件现在携带 `model`** — `AgentRunner` 在 `started` 事件 payload 中包含 model 名称，SSE 适配器可自动捕获
 
 ### 变更

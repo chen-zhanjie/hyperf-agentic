@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`SseWriter`** — Thin SSE transport adapter at `src/Stream/SseWriter.php`. Converts internal events to OpenAI-compatible SSE wire format. Model is auto-captured from the `started` event
-- **`reasoning_delta` event** — `TurnExecutor` now emits `REASONING_DELTA` events during streaming for reasoning/thinking content (previously buffered silently)
+- **`reasoning_delta` event** — `TurnExecutor` now emits `REASONING_DELTA` events for reasoning/thinking content in both sync and stream modes (previously stream-only and buffered silently)
+- **`text_delta` event in sync mode** — `TurnExecutor` now emits `TEXT_DELTA` events in both sync and stream modes (previously stream-only). Sync mode emits the full content as a single chunk
 - **`started` event now carries `model`** — `AgentRunner` includes the model name in the `started` event payload, so SSE adapters can auto-capture it
 
 ### Changed

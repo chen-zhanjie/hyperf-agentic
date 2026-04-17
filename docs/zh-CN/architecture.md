@@ -208,6 +208,7 @@ src/
 ├── Policy/            # 权限策略
 │   └── ConfigToolPermissionPolicy.php
 ├── Session/           # 会话存储
+├── Resolver/          # 人工输入解析器（Cli, Http, Null）
 ├── Persona/           # 人设（Persona, PersonaLoader）
 ├── Loader/            # 加载器（Annotation, Config, Skill）
 ├── Event/             # 事件系统

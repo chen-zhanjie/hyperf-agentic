@@ -64,7 +64,7 @@ interface ToolInterface
     public function name(): string;           // 工具唯一名称
     public function description(): string;    // 描述（LLM 根据此决定是否调用）
     public function parameters(): array;      // JSON Schema 格式的参数定义
-    public function execute(array $arguments): string|array;  // 执行逻辑
+    public function execute(array $arguments): string;  // 执行逻辑
     public function isEnabled(): bool;        // 是否启用
     public function isParallelAllowed(): bool; // 是否允许并行调用
 }
@@ -97,9 +97,7 @@ public function parameters(): array
 
 ### 返回值
 
-`execute()` 返回 `string` 或 `array`：
-- 返回 `string`：直接作为工具结果返回给 LLM
-- 返回 `array`：自动 JSON 编码后返回
+`execute()` 必须返回 `string`。需要返回结构化数据时，使用 `json_encode()` 编码后返回。
 
 ## Per-Agent 工具过滤
 
@@ -147,7 +145,19 @@ $arguments = [
 ];
 ```
 
-需要通过 `setHumanInputResolver()` 注入解析器，否则在非交互环境中会报错。
+需要通过 `setHumanInputResolver()` 注入 `HumanInputResolverInterface` 实现。SDK 提供三个内置解析器：
+
+| 解析器 | 适用环境 | 行为 |
+|--------|---------|------|
+| `CliHumanInputResolver` | CLI（Symfony Console） | 通过 `SymfonyStyle` 阻塞式交互提示 |
+| `HttpHumanInputResolver` | HTTP（Hyperf） | 返回挂起结果，由前端解析后恢复 |
+| `NullHumanInputResolver` | 测试 / 非交互 | 返回默认值，不进行提示 |
+
+```php
+use ChenZhanjie\Agentic\Resolver\CliHumanInputResolver;
+
+$runner->setHumanInputResolver(new CliHumanInputResolver($io));
+```
 
 ### SkillTool
 

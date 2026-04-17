@@ -210,6 +210,7 @@ src/
 ├── Policy/            # Permission policies
 │   └── ConfigToolPermissionPolicy.php
 ├── Session/           # Session storage
+├── Resolver/          # Human input resolvers (Cli, Http, Null)
 ├── Persona/           # Personas (Persona, PersonaLoader)
 ├── Loader/            # Loaders (Annotation, Config, Skill)
 ├── Event/             # Event system

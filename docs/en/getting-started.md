@@ -110,6 +110,63 @@ $response = $this->agentic->chat([
 // $response is a string
 ```
 
+## Local Debug CLI
+
+The SDK includes a standalone `debug.php` script for local debugging without the Hyperf framework. It supports interactive tool calls, ask-tool prompts (confirm / select / multiselect), and streaming output.
+
+### Setup
+
+Copy `.env.test.example` to `.env.test` and fill in your API credentials:
+
+```bash
+cp .env.test.example .env.test
+# Edit .env.test with your API keys
+```
+
+### Start a Session
+
+```bash
+php debug.php                         # OpenAI protocol, default model
+php debug.php --protocol anthropic    # Anthropic protocol
+php debug.php --model gpt-4o-mini     # Override model
+php debug.php --stream                # Streaming mode
+```
+
+### Session Commands
+
+| Command | Description |
+|---------|-------------|
+| `/quit`, `/exit` | Exit the session |
+| `/reset` | Clear conversation history |
+| `/stream` | Toggle streaming mode |
+| `/model <name>` | Switch model mid-session |
+
+### Built-in Tools
+
+The debug CLI registers 3 tools for testing:
+
+| Tool | Description |
+|------|-------------|
+| `get_time` | Get current time in any timezone |
+| `calculate` | Evaluate math expressions |
+| `ask` | Interactive user input (confirm / select / multiselect / text) |
+
+### Example Prompts
+
+Try these prompts to exercise different interaction patterns:
+
+| Scenario | Example Prompt | Expected Behavior |
+|----------|---------------|-------------------|
+| Tool call | `What time is it in Tokyo?` | Calls `get_time` with `Asia/Tokyo` |
+| Math | `Calculate 123 * 456 + 789` | Calls `calculate` |
+| Confirm | `Confirm deletion of all temporary files` | Asks for confirmation via `ask` (confirm) |
+| Select | `Help me choose one coffee from Americano, Latte, or Cappuccino` | Shows a single-choice menu via `ask` (select) |
+| Multiselect | `I want some fruit, pick a few from Apple, Banana, Orange, and Grape` | Shows a multi-choice menu via `ask` (multiselect) |
+| Multi-tool | `Calculate (15 + 27) * 3, then tell me what time it is now` | Calls `calculate` then `get_time` |
+| Streaming | Type `/stream` first, then chat | See real-time token output with reasoning |
+
+> **Note:** The LLM decides which tool to call and how to structure the `ask` fields. Different models may produce slightly different tool call patterns. The prompts above are designed to reliably trigger each interaction type.
+
 ## Next Steps
 
 - [Configuration](configuration.md) — Detailed config reference
