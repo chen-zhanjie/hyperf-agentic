@@ -51,7 +51,7 @@ class ConfigProvider
 
             // Layer 3: Agent Core
             PromptBuilder::class => PromptBuilder::class,
-            LlmClient::class => LlmClient::class,
+            LlmClient::class => LlmClientFactory::class,
             GuardrailRunner::class => GuardrailRunner::class,
             ToolGuardrailRunner::class => ToolGuardrailRunner::class,
             MiddlewarePipeline::class => MiddlewarePipeline::class,
@@ -59,7 +59,7 @@ class ConfigProvider
             AgentRunner::class => AgentRunner::class,
 
             // Layer 4: Facade
-            Agentic::class => Agentic::class,
+            Agentic::class => AgenticFactory::class,
         ];
     }
 }
