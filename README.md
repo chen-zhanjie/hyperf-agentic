@@ -27,7 +27,7 @@ return [
     'default' => 'openai',
     'providers' => [
         'openai' => [
-            'driver'   => 'openai',
+            'protocol' => 'openai',
             'api_key'  => env('OPENAI_API_KEY'),
             'base_url' => 'https://api.openai.com/v1',
             'model'    => 'gpt-4o',
@@ -136,7 +136,7 @@ composer install
 vendor/bin/phpunit
 ```
 
-543 tests, 1008 assertions — all passing.
+575 tests, 1146 assertions — all passing.
 
 ## License
 

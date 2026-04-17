@@ -27,7 +27,7 @@ return [
     'default' => 'openai',
     'providers' => [
         'openai' => [
-            'driver'   => 'openai',
+            'protocol' => 'openai',
             'api_key'  => env('OPENAI_API_KEY'),
             'base_url' => 'https://api.openai.com/v1',
             'model'    => 'gpt-4o',
@@ -136,7 +136,7 @@ composer install
 vendor/bin/phpunit
 ```
 
-543 个测试，1008 个断言 — 全部通过。
+575 个测试，1146 个断言 — 全部通过。
 
 ## 许可证
 
