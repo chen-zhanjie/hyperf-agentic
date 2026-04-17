@@ -82,7 +82,7 @@ class TurnExecutor
             );
         } else {
             [$content, $toolCalls, $usage, $reasoningContent] = $this->callLlmSync(
-                $fullMessages, $llmOptions,
+                $fullMessages, $llmOptions, $onEvent,
             );
         }
 
@@ -137,15 +137,30 @@ class TurnExecutor
      *
      * @return array{0: string, 1: array, 2: array, 3: string|null}
      */
-    private function callLlmSync(array $fullMessages, array $llmOptions): array
+    private function callLlmSync(array $fullMessages, array $llmOptions, ?callable $onEvent): array
     {
         $response = $this->llmClient->chat($fullMessages, $llmOptions);
 
+        $content = is_string($response['content'] ?? null) ? $response['content'] : (string) ($response['content'] ?? '');
+
+        if ($content !== '') {
+            $this->emitEvent($onEvent, AgentEventType::TEXT_DELTA, [
+                'content' => $content,
+            ]);
+        }
+
+        $reasoningContent = $response['reasoning_content'] ?? null;
+        if ($reasoningContent !== null && $reasoningContent !== '') {
+            $this->emitEvent($onEvent, AgentEventType::REASONING_DELTA, [
+                'content' => $reasoningContent,
+            ]);
+        }
+
         return [
-            is_string($response['content'] ?? null) ? $response['content'] : (string) ($response['content'] ?? ''),
+            $content,
             $response['tool_calls'] ?? [],
             $response['usage'] ?? [],
-            $response['reasoning_content'] ?? null,
+            $reasoningContent,
         ];
     }
 

@@ -62,9 +62,9 @@ class CliHumanInputResolver implements HumanInputResolverInterface
         // Build label→value map for robust lookup
         $labelToValue = [];
         $choices = [];
-        foreach ($field['options'] as $opt) {
-            $choices[] = $opt['label'];
-            $labelToValue[$opt['label']] = $opt['value'];
+        foreach ($this->normalizeOptions($field['options'] ?? []) as $label => $value) {
+            $choices[] = $label;
+            $labelToValue[$label] = $value;
         }
 
         if ($field['allow_other'] ?? false) {
@@ -85,11 +85,10 @@ class CliHumanInputResolver implements HumanInputResolverInterface
     private function resolveMultiselect(array $field, array &$other): array
     {
         $selected = [];
-        $options = $field['options'];
 
-        foreach ($options as $opt) {
-            if ($this->io->confirm("  Include {$opt['label']}?", false)) {
-                $selected[] = $opt['value'];
+        foreach ($this->normalizeOptions($field['options'] ?? []) as $label => $value) {
+            if ($this->io->confirm("  Include {$label}?", false)) {
+                $selected[] = $value;
             }
         }
 
@@ -100,5 +99,26 @@ class CliHumanInputResolver implements HumanInputResolverInterface
         }
 
         return $selected;
+    }
+
+    /**
+     * Normalize options to label→value map.
+     * Handles both string items ["美式","拿铁"] and object items [{"label":"美式","value":"americano"}].
+     *
+     * @return array<string, string> label → value
+     */
+    private function normalizeOptions(array $options): array
+    {
+        $normalized = [];
+        foreach ($options as $opt) {
+            if (is_string($opt)) {
+                $normalized[$opt] = $opt;
+            } elseif (is_array($opt)) {
+                $label = $opt['label'] ?? (string) ($opt['value'] ?? '');
+                $value = $opt['value'] ?? $opt['label'] ?? '';
+                $normalized[$label] = $value;
+            }
+        }
+        return $normalized;
     }
 }
