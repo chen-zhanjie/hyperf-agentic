@@ -168,6 +168,49 @@ class ToolRegistryTest extends TestCase
         $this->assertEquals(1, $this->registry->count());
     }
 
+    // ── Builtin tool preservation ──
+
+    public function testOnlyPreservesBuiltinTools(): void
+    {
+        $this->registry->register($this->createTool('search', 'Search'));
+        $this->registry->register($this->createTool('ask', 'Ask'), builtin: true);
+        $this->registry->register($this->createTool('skill', 'Skill'), builtin: true);
+
+        // Whitelist only 'search' — builtin tools should still be included
+        $filtered = $this->registry->only(['search']);
+
+        $this->assertTrue($filtered->has('search'));
+        $this->assertTrue($filtered->has('ask'), 'Builtin tool "ask" should be preserved');
+        $this->assertTrue($filtered->has('skill'), 'Builtin tool "skill" should be preserved');
+        $this->assertSame(3, $filtered->count());
+    }
+
+    public function testOnlyPreservesBuiltinToolsWithEmptyWhitelist(): void
+    {
+        $this->registry->register($this->createTool('ask', 'Ask'), builtin: true);
+        $this->registry->register($this->createTool('search', 'Search'));
+
+        // Empty whitelist — only builtin tools survive
+        $filtered = $this->registry->only([]);
+
+        $this->assertTrue($filtered->has('ask'));
+        $this->assertFalse($filtered->has('search'));
+        $this->assertSame(1, $filtered->count());
+    }
+
+    public function testNonBuiltinToolsAreFilteredOut(): void
+    {
+        $this->registry->register($this->createTool('search', 'Search'));
+        $this->registry->register($this->createTool('delete', 'Delete'));
+        $this->registry->register($this->createTool('ask', 'Ask'), builtin: true);
+
+        $filtered = $this->registry->only(['search']);
+
+        $this->assertTrue($filtered->has('search'));
+        $this->assertFalse($filtered->has('delete'));
+        $this->assertTrue($filtered->has('ask'));
+    }
+
     // ── Helpers ──
 
     private function createTool(string $name, string $desc, bool $enabled = true): ToolInterface

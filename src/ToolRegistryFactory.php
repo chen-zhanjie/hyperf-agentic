@@ -33,17 +33,17 @@ class ToolRegistryFactory
         // 2. Config-declared tools
         $this->container->get(ConfigToolLoader::class)->load($registry);
 
-        // 3. Built-in tools
-        $registry->register($this->container->get(AskTool::class));
+        // 3. Built-in tools (always included in agent tool whitelists)
+        $registry->register($this->container->get(AskTool::class), builtin: true);
 
         // 4. RecallTool (system-level message recall)
         $messageStore = $this->container->get(MessageStoreInterface::class);
-        $registry->register(new RecallTool($messageStore));
+        $registry->register(new RecallTool($messageStore), builtin: true);
 
         // 5. SkillTool — only when SkillRegistry is available
         $skillRegistry = $this->container->get(SkillRegistry::class);
         if ($skillRegistry !== null) {
-            $registry->register(new SkillTool($skillRegistry));
+            $registry->register(new SkillTool($skillRegistry), builtin: true);
         }
 
         return $registry;

@@ -3,7 +3,7 @@
     "description": "Hyperf-native AI Agent SDK — config-driven, Hermes-inspired",
     "type": "hyperf-extension",
     "license": "MIT",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "require": {
         "php": ">=8.1",
         "psr/log": "^2.0|^3.0",

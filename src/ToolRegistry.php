@@ -10,20 +10,25 @@ class ToolRegistry
     /** @var array<string, ToolEntry> */
     private array $entries = [];
 
-    public function register(ToolInterface $tool, string $group = 'default', int $maxResultSize = 100000): void
+    public function register(ToolInterface $tool, string $group = 'default', int $maxResultSize = 100000, bool $builtin = false): void
     {
         $name = $tool->name();
         if (isset($this->entries[$name])) {
             throw new \InvalidArgumentException("Tool [{$name}] is already registered");
         }
-        $this->entries[$name] = new ToolEntry($tool, $group, $maxResultSize);
+        $this->entries[$name] = new ToolEntry($tool, $group, $maxResultSize, $builtin);
     }
 
-    /** Filter by names, returns new instance (immutable) */
+    /** Filter by names, returns new instance (immutable). Built-in tools are always included. */
     public function only(array $names): self
     {
+        $flip = array_flip($names);
         $filtered = clone $this;
-        $filtered->entries = array_intersect_key($this->entries, array_flip($names));
+        $filtered->entries = array_filter(
+            $this->entries,
+            fn(ToolEntry $entry, string $name) => isset($flip[$name]) || $entry->builtin,
+            ARRAY_FILTER_USE_BOTH,
+        );
         return $filtered;
     }
 

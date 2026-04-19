@@ -11,5 +11,6 @@ class ToolEntry
         public readonly ToolInterface $tool,
         public readonly string $group = 'default',
         public readonly int $maxResultSize = 100000,
+        public readonly bool $builtin = false,
     ) {}
 }
