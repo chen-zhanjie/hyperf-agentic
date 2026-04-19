@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 新增
+
+- **`afterCall` 响应变换** — `LlmMiddlewareInterface::afterCall()` 现在返回 `?LlmResponse`。返回新的 `LlmResponse` 替换原始响应，或返回 `null` 透传。`LlmClient` 会捕获并使用管道返回的响应
+- **`onAgentStart` 钩子** — 新增 `AgentMiddlewareInterface::onAgentStart(array $agentConfig, array $options): void` 方法，在 Agent 运行开始时调用一次。用于初始化（协程上下文设置、日志记录等）。容错：异常被捕获并记录为 warning
+- **`onChunk` 流式钩子** — 新增 `LlmMiddlewareInterface::onChunk(array $chunk): void` 方法，在 `chatStream()` 期间每个分块调用。用于实时 token 计数、日志记录、速率追踪。容错：异常被捕获并记录为 warning
+- **`ToolCallContext` DTO** — 不可变 DTO，替代 `AgentMiddlewareInterface::beforeToolCall()` 和 `afterToolCall()` 中的松散 `array $runContext` 参数。携带 `sessionId`、`agentName`、`toolCallId`、`iteration` 作为类型化只读属性，通过 `with()` 方法支持不可变修改
+
+### 变更
+
+- **破坏性变更：** `LlmMiddlewareInterface::afterCall()` 返回类型从 `void` 改为 `?LlmResponse`。现有实现需添加 `return null;` 以透传
+- **破坏性变更：** `AgentMiddlewareInterface::beforeToolCall()` 和 `afterToolCall()` 现在接受 `ToolCallContext $context` 而非 `array $runContext = []`。现有实现需更新签名
+- **破坏性变更：** `AgentMiddlewareInterface` 新增必需方法 `onAgentStart(array $agentConfig, array $options): void`。现有实现需添加该方法
+- **破坏性变更：** `LlmMiddlewareInterface` 新增必需方法 `onChunk(array $chunk): void`。现有实现需添加该方法
+- `LlmMiddlewarePipeline::afterCall()` 现在返回 `LlmResponse`（链式传递中间件修改）
+- `LlmClient::chat()` 和 `chatStream()` 现在捕获并返回 `afterCall()` 中间件修改后的响应
+- `AuditMiddleware` 更新以实现新的 `AgentMiddlewareInterface`（`onAgentStart` + `ToolCallContext`）
+
 ## [1.0.0] - 2026-04-19
 
 ### 新增

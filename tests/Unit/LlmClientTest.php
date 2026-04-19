@@ -229,9 +229,10 @@ class LlmClientTest extends TestCase
                 $this->calls[] = 'beforeCall';
                 return $request;
             }
-            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): void
+            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): ?LlmResponse
             {
                 $this->calls[] = 'afterCall';
+                return null;
             }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void
             {
@@ -241,6 +242,7 @@ class LlmClientTest extends TestCase
             {
                 $this->calls[] = "onFailover:{$fromProvider}→{$toProvider}";
             }
+            public function onChunk(array $chunk): void {}
         };
 
         $pipeline = new LlmMiddlewarePipeline();
@@ -270,15 +272,17 @@ class LlmClientTest extends TestCase
                 $this->calls[] = 'beforeCall';
                 return $request;
             }
-            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): void
+            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): ?LlmResponse
             {
                 $this->calls[] = 'afterCall';
+                return null;
             }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void
             {
                 $this->calls[] = "onRetry:{$attempt}";
             }
             public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
         };
 
         $pipeline = new LlmMiddlewarePipeline();
@@ -313,15 +317,17 @@ class LlmClientTest extends TestCase
                 $this->calls[] = 'beforeCall';
                 return $request;
             }
-            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): void
+            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): ?LlmResponse
             {
                 $this->calls[] = 'afterCall';
+                return null;
             }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
             public function onFailover(string $fromProvider, string $toProvider): void
             {
                 $this->calls[] = "onFailover:{$fromProvider}→{$toProvider}";
             }
+            public function onChunk(array $chunk): void {}
         };
 
         $pipeline = new LlmMiddlewarePipeline();
@@ -357,9 +363,13 @@ class LlmClientTest extends TestCase
                     'messages' => array_merge($request->messages, [['role' => 'system', 'content' => 'injected']]),
                 ]);
             }
-            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): void {}
+            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): ?LlmResponse
+            {
+                return null;
+            }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
             public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
         };
 
         $pipeline = new LlmMiddlewarePipeline();

@@ -186,10 +186,10 @@ class ToolDispatcher
      */
     private function execute(string $name, array $arguments, AgentRunContext $context, ?callable $onEvent = null): string
     {
-        $runContext = [
-            'session_id' => $context->sessionId,
-            'agent_name' => $context->agentName ?? '',
-        ];
+        $runContext = new ToolCallContext(
+            sessionId: $context->sessionId,
+            agentName: $context->agentName ?? '',
+        );
 
         // Step 1: Middleware interception
         $intercepted = $this->middleware->beforeToolCall($name, $arguments, $runContext);

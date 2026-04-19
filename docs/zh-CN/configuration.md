@@ -153,28 +153,38 @@ class LoggingLlmMiddleware implements LlmMiddlewareInterface
     {
         return $request; // 或修改 messages/options
     }
-    public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, \ChenZhanjie\Agentic\LlmResponse $response): void
+    public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, \ChenZhanjie\Agentic\LlmResponse $response): ?\ChenZhanjie\Agentic\LlmResponse
     {
-        // 记录响应指标
+        // 记录响应指标，返回 null 透传原始响应
+        return null;
     }
     public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
     public function onFailover(string $fromProvider, string $toProvider): void {}
+    public function onChunk(array $chunk): void
+    {
+        // chatStream() 期间每个分块调用
+    }
 }
 ```
 
 ### AgentMiddlewarePipeline
 
-Agent 层级钩子，用于工具循环（循环前后、工具调用前后）：
+Agent 层级钩子，用于工具循环（启动、循环前后、工具调用前后）：
 
 ```php
 use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\Contract\AgentMiddlewareInterface;
+use ChenZhanjie\Agentic\ToolCallContext;
 
 class AuditAgentMiddleware implements AgentMiddlewareInterface
 {
+    public function onAgentStart(array $agentConfig, array $options): void
+    {
+        // Agent 运行开始时调用一次
+    }
     public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
     public function afterLoop(\ChenZhanjie\Agentic\AgentResult $result): \ChenZhanjie\Agentic\AgentResult { return $result; }
-    public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string { return null; }
-    public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void {}
+    public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string { return null; }
+    public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void {}
 }
 ```

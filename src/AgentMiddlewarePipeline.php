@@ -21,6 +21,19 @@ class AgentMiddlewarePipeline
         $this->middlewares[] = $middleware;
     }
 
+    public function onAgentStart(array $agentConfig, array $options): void
+    {
+        foreach ($this->middlewares as $mw) {
+            try {
+                $mw->onAgentStart($agentConfig, $options);
+            } catch (\Throwable $e) {
+                $this->logger->warning('AgentMiddleware onAgentStart error: ' . $e->getMessage(), [
+                    'middleware' => get_class($mw),
+                ]);
+            }
+        }
+    }
+
     public function beforeLoop(array $messages, array $agentConfig): array
     {
         foreach ($this->middlewares as $mw) {
@@ -50,11 +63,11 @@ class AgentMiddlewarePipeline
         return $result;
     }
 
-    public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string
+    public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string
     {
         foreach ($this->middlewares as $mw) {
             try {
-                $result = $mw->beforeToolCall($name, $arguments, $runContext);
+                $result = $mw->beforeToolCall($name, $arguments, $context);
                 if ($result !== null) {
                     return $result;
                 }
@@ -68,11 +81,11 @@ class AgentMiddlewarePipeline
         return null;
     }
 
-    public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void
+    public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void
     {
         foreach ($this->middlewares as $mw) {
             try {
-                $mw->afterToolCall($name, $arguments, $result, $runContext);
+                $mw->afterToolCall($name, $arguments, $result, $context);
             } catch (\Throwable $e) {
                 $this->logger->warning('AgentMiddleware afterToolCall error: ' . $e->getMessage(), [
                     'middleware' => get_class($mw),

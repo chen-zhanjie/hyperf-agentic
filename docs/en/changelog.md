@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`afterCall` response transformation** — `LlmMiddlewareInterface::afterCall()` now returns `?LlmResponse`. Return a new `LlmResponse` to replace the original, or `null` to pass through. `LlmClient` captures the returned response from the pipeline
+- **`onAgentStart` hook** — New `AgentMiddlewareInterface::onAgentStart(array $agentConfig, array $options): void` method, called once when the agent run starts. Use for initialization (coroutine context setup, logging start, etc.). Fault-tolerant: exceptions are caught and logged as warnings
+- **`onChunk` streaming hook** — New `LlmMiddlewareInterface::onChunk(array $chunk): void` method, called for each chunk during `chatStream()`. Use for real-time token counting, live logging, or rate tracking. Fault-tolerant: exceptions are caught and logged as warnings
+- **`ToolCallContext` DTO** — Immutable DTO replacing the loose `array $runContext` parameter in `AgentMiddlewareInterface::beforeToolCall()` and `afterToolCall()`. Carries `sessionId`, `agentName`, `toolCallId`, and `iteration` as typed readonly properties with a `with()` method for immutable overrides
+
+### Changed
+
+- **BREAKING:** `LlmMiddlewareInterface::afterCall()` return type changed from `void` to `?LlmResponse`. Existing implementations must add `return null;` to pass through
+- **BREAKING:** `AgentMiddlewareInterface::beforeToolCall()` and `afterToolCall()` now accept `ToolCallContext $context` instead of `array $runContext = []`. Existing implementations must update their signatures
+- **BREAKING:** `AgentMiddlewareInterface` now requires `onAgentStart(array $agentConfig, array $options): void`. Existing implementations must add the method
+- **BREAKING:** `LlmMiddlewareInterface` now requires `onChunk(array $chunk): void`. Existing implementations must add the method
+- `LlmMiddlewarePipeline::afterCall()` now returns `LlmResponse` (chains through middleware modifications)
+- `LlmClient::chat()` and `chatStream()` now capture and return the middleware-modified response from `afterCall()`
+- `AuditMiddleware` updated to implement new `AgentMiddlewareInterface` with `onAgentStart` and `ToolCallContext`
+
 ## [1.0.0] - 2026-04-19
 
 ### Added

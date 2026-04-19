@@ -17,6 +17,7 @@ use ChenZhanjie\Agentic\Skill\SkillRegistry;
 use ChenZhanjie\Agentic\Tests\Unit\Concerns\AgentRunnerTestHelpers;
 use ChenZhanjie\Agentic\ToolGuardrailRunner;
 use ChenZhanjie\Agentic\ToolRegistry;
+use ChenZhanjie\Agentic\ToolCallContext;
 use PHPUnit\Framework\TestCase;
 
 class BasicRunnerTest extends TestCase
@@ -136,16 +137,17 @@ class BasicRunnerTest extends TestCase
         $registry->register($tool);
 
         $middleware = new class implements AgentMiddlewareInterface {
+            public function onAgentStart(array $agentConfig, array $options): void {}
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
-            public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string
+            public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string
             {
                 if ($name === 'dangerous') {
                     return 'Tool blocked by security policy';
                 }
                 return null;
             }
-            public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void {}
+            public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void {}
         };
 
         $pipeline = new AgentMiddlewarePipeline();

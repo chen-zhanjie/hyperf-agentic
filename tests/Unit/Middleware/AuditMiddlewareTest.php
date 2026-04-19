@@ -6,6 +6,7 @@ namespace ChenZhanjie\Agentic\Tests\Unit\Middleware;
 use PHPUnit\Framework\TestCase;
 use ChenZhanjie\Agentic\AgentResult;
 use ChenZhanjie\Agentic\Middleware\AuditMiddleware;
+use ChenZhanjie\Agentic\ToolCallContext;
 
 class AuditMiddlewareTest extends TestCase
 {
@@ -30,7 +31,7 @@ class AuditMiddlewareTest extends TestCase
         });
 
         $middleware->beforeLoop([], ['session_id' => 's1', 'agent_name' => 'bot']);
-        $result = $middleware->beforeToolCall('search', ['query' => 'test']);
+        $result = $middleware->beforeToolCall('search', ['query' => 'test'], new ToolCallContext(sessionId: 's1', agentName: 'bot'));
 
         $this->assertNull($result); // pass through
         $this->assertCount(1, $log);
@@ -46,8 +47,8 @@ class AuditMiddlewareTest extends TestCase
         });
 
         $middleware->beforeLoop([], ['session_id' => 's1', 'agent_name' => 'bot']);
-        $middleware->beforeToolCall('search', ['query' => 'test']);
-        $middleware->afterToolCall('search', ['query' => 'test'], 'found results');
+        $middleware->beforeToolCall('search', ['query' => 'test'], new ToolCallContext(sessionId: 's1', agentName: 'bot'));
+        $middleware->afterToolCall('search', ['query' => 'test'], 'found results', new ToolCallContext(sessionId: 's1', agentName: 'bot'));
 
         $this->assertCount(2, $log);
         $this->assertSame('tool.result', $log[1]['event']);
@@ -67,7 +68,7 @@ class AuditMiddlewareTest extends TestCase
             'password' => 'secret123',
             'api_key' => 'sk-abc',
             'normal_field' => 'visible',
-        ]);
+        ], new ToolCallContext());
 
         $args = $log[0]['ctx']['arguments'];
         $this->assertSame('***REDACTED***', $args['password']);
@@ -83,8 +84,8 @@ class AuditMiddlewareTest extends TestCase
         });
 
         $middleware->beforeLoop([], []);
-        $middleware->beforeToolCall('test', []);
-        $middleware->afterToolCall('test', [], 'Tool execution error [test]: something broke');
+        $middleware->beforeToolCall('test', [], new ToolCallContext());
+        $middleware->afterToolCall('test', [], 'Tool execution error [test]: something broke', new ToolCallContext());
 
         $this->assertFalse($log[1]['ctx']['success']);
     }

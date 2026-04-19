@@ -56,21 +56,23 @@ $agentConfig = [
 
 Layer 3 is split into two independent sub-layers so that direct LLM calls and full agent loops can be used independently.
 
-**Layer 3a (LLM Layer)** handles raw LLM communication. `LlmClient` sends requests through `LlmMiddlewarePipeline` which exposes four hooks:
+**Layer 3a (LLM Layer)** handles raw LLM communication. `LlmClient` sends requests through `LlmMiddlewarePipeline` which exposes five hooks:
 
 | Hook | Purpose |
 |------|---------|
 | `beforeCall` | Inspect or modify the request before it reaches the adapter |
-| `afterCall` | Observe the response (logging, metrics, cost tracking) |
+| `afterCall` | Observe or transform the response (return `LlmResponse` to replace, `null` to pass through) |
 | `onRetry` | Notified when the adapter retries a failed request |
 | `onFailover` | Notified when the client switches to a different provider |
+| `onChunk` | Notified for each chunk during `chatStream()` (real-time token counting, logging) |
 
 The pipeline returns a `LlmResponse` DTO containing `content`, `usage`, `provider`, `model`, `reasoningContent`, `toolCalls`, and `latencyMs`. `Agentic::chat()` and `chatStream()` bypass `AgentRunner` entirely and call `LlmClient` directly.
 
-**Layer 3b (Agent Core)** handles the ReAct loop. `AgentRunner` orchestrates iterations using `TurnExecutor` internally, which in turn delegates to `LlmClient` for each LLM call. `AgentMiddlewarePipeline` exposes four hooks at the agent level:
+**Layer 3b (Agent Core)** handles the ReAct loop. `AgentRunner` orchestrates iterations using `TurnExecutor` internally, which in turn delegates to `LlmClient` for each LLM call. `AgentMiddlewarePipeline` exposes five hooks at the agent level:
 
 | Hook | Purpose |
 |------|---------|
+| `onAgentStart` | Called once when the agent run starts (initialization, logging) |
 | `beforeLoop` | Inspect or modify messages before the loop starts |
 | `afterLoop` | Inspect or transform the `AgentResult` after the loop ends |
 | `beforeToolCall` | Intercept a tool call; return a string to short-circuit execution |
@@ -79,6 +81,8 @@ The pipeline returns a `LlmResponse` DTO containing `content`, `usage`, `provide
 This separation means consumers can use the LLM layer for simple chat without pulling in the agent loop, guardrails, or tool dispatch machinery.
 
 **`LlmCallRequest`** is an immutable DTO passed through the LLM middleware chain. It carries `messages`, `options`, `provider`, and `model` as readonly properties. A `with(array $overrides): self` method produces a new instance with selective field overrides, following the immutable pattern used throughout the SDK.
+
+**`ToolCallContext`** is an immutable DTO passed to agent middleware tool-call hooks (`beforeToolCall` / `afterToolCall`). It carries `sessionId`, `agentName`, `toolCallId`, and `iteration` as readonly properties, replacing the previous loose `array $runContext`. A `with(array $overrides): self` method produces a new instance with selective field overrides.
 
 ### Agent Loop
 
@@ -285,6 +289,7 @@ src/
 ├── TurnExecutor.php   # Layer 3b: Single turn execution (unified sync/stream)
 ├── Agent.php          # Agent DTO (config as data)
 ├── ToolDispatcher.php # Layer 3b: Tool dispatch chain (guardrails → permissions → execution)
+├── ToolCallContext.php # Immutable context DTO for agent middleware tool-call hooks
 ├── LoopState.php      # Per-request mutable loop accumulator
 ├── AgentRunContext.php # Per-request immutable context
 ├── AgentResult.php    # Agent execution result

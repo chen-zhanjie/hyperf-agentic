@@ -153,28 +153,38 @@ class LoggingLlmMiddleware implements LlmMiddlewareInterface
     {
         return $request; // or modify messages/options
     }
-    public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, \ChenZhanjie\Agentic\LlmResponse $response): void
+    public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, \ChenZhanjie\Agentic\LlmResponse $response): ?\ChenZhanjie\Agentic\LlmResponse
     {
-        // Log response metrics
+        // Log response metrics, return null to pass through original response
+        return null;
     }
     public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
     public function onFailover(string $fromProvider, string $toProvider): void {}
+    public function onChunk(array $chunk): void
+    {
+        // Called for each chunk during chatStream()
+    }
 }
 ```
 
 ### AgentMiddlewarePipeline
 
-Agent-level hooks for the tool loop (before/after loop, before/after tool calls):
+Agent-level hooks for the tool loop (start, before/after loop, before/after tool calls):
 
 ```php
 use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\Contract\AgentMiddlewareInterface;
+use ChenZhanjie\Agentic\ToolCallContext;
 
 class AuditAgentMiddleware implements AgentMiddlewareInterface
 {
+    public function onAgentStart(array $agentConfig, array $options): void
+    {
+        // Called once when the agent run starts
+    }
     public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
     public function afterLoop(\ChenZhanjie\Agentic\AgentResult $result): \ChenZhanjie\Agentic\AgentResult { return $result; }
-    public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string { return null; }
-    public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void {}
+    public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string { return null; }
+    public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void {}
 }
 ```

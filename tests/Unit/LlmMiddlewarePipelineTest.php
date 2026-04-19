@@ -34,9 +34,10 @@ class LlmMiddlewarePipelineTest extends TestCase
             {
                 return $request->with(['options' => array_merge($request->options, ['injected_1' => true])]);
             }
-            public function afterCall(LlmCallRequest $request, LlmResponse $response): void {}
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse { return null; }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
             public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
         };
 
         $mw2 = new class implements LlmMiddlewareInterface {
@@ -44,9 +45,10 @@ class LlmMiddlewarePipelineTest extends TestCase
             {
                 return $request->with(['options' => array_merge($request->options, ['injected_2' => true])]);
             }
-            public function afterCall(LlmCallRequest $request, LlmResponse $response): void {}
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse { return null; }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
             public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
         };
 
         $pipeline = new LlmMiddlewarePipeline();
@@ -69,24 +71,27 @@ class LlmMiddlewarePipelineTest extends TestCase
         $failingMw = new class($order) implements LlmMiddlewareInterface {
             public function __construct(public array &$order) {}
             public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
-            public function afterCall(LlmCallRequest $request, LlmResponse $response): void
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse
             {
                 $this->order[] = 'failing';
                 throw new \RuntimeException('afterCall explosion');
             }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
             public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
         };
 
         $goodMw = new class($order) implements LlmMiddlewareInterface {
             public function __construct(public array &$order) {}
             public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
-            public function afterCall(LlmCallRequest $request, LlmResponse $response): void
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse
             {
                 $this->order[] = 'good';
+                return null;
             }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
             public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
         };
 
         $pipeline = new LlmMiddlewarePipeline();
@@ -111,12 +116,13 @@ class LlmMiddlewarePipelineTest extends TestCase
         $mw = new class($notified) implements LlmMiddlewareInterface {
             public function __construct(public array &$notified) {}
             public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
-            public function afterCall(LlmCallRequest $request, LlmResponse $response): void {}
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse { return null; }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void
             {
                 $this->notified[] = ['provider' => $provider, 'attempt' => $attempt];
             }
             public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
         };
 
         $pipeline = new LlmMiddlewarePipeline();
@@ -136,12 +142,13 @@ class LlmMiddlewarePipelineTest extends TestCase
         $mw = new class($failovers) implements LlmMiddlewareInterface {
             public function __construct(public array &$failovers) {}
             public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
-            public function afterCall(LlmCallRequest $request, LlmResponse $response): void {}
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse { return null; }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
             public function onFailover(string $fromProvider, string $toProvider): void
             {
                 $this->failovers[] = ['from' => $fromProvider, 'to' => $toProvider];
             }
+            public function onChunk(array $chunk): void {}
         };
 
         $pipeline = new LlmMiddlewarePipeline();
@@ -161,24 +168,26 @@ class LlmMiddlewarePipelineTest extends TestCase
         $failingMw = new class($order) implements LlmMiddlewareInterface {
             public function __construct(public array &$order) {}
             public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
-            public function afterCall(LlmCallRequest $request, LlmResponse $response): void {}
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse { return null; }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void
             {
                 $this->order[] = 'failing_onRetry';
                 throw new \RuntimeException('onRetry explosion');
             }
             public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
         };
 
         $goodMw = new class($order) implements LlmMiddlewareInterface {
             public function __construct(public array &$order) {}
             public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
-            public function afterCall(LlmCallRequest $request, LlmResponse $response): void {}
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse { return null; }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void
             {
                 $this->order[] = 'good_onRetry';
             }
             public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
         };
 
         $pipeline = new LlmMiddlewarePipeline();
@@ -200,24 +209,26 @@ class LlmMiddlewarePipelineTest extends TestCase
         $failingMw = new class($order) implements LlmMiddlewareInterface {
             public function __construct(public array &$order) {}
             public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
-            public function afterCall(LlmCallRequest $request, LlmResponse $response): void {}
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse { return null; }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
             public function onFailover(string $fromProvider, string $toProvider): void
             {
                 $this->order[] = 'failing_onFailover';
                 throw new \RuntimeException('onFailover explosion');
             }
+            public function onChunk(array $chunk): void {}
         };
 
         $goodMw = new class($order) implements LlmMiddlewareInterface {
             public function __construct(public array &$order) {}
             public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
-            public function afterCall(LlmCallRequest $request, LlmResponse $response): void {}
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse { return null; }
             public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
             public function onFailover(string $fromProvider, string $toProvider): void
             {
                 $this->order[] = 'good_onFailover';
             }
+            public function onChunk(array $chunk): void {}
         };
 
         $pipeline = new LlmMiddlewarePipeline();
@@ -228,5 +239,88 @@ class LlmMiddlewarePipelineTest extends TestCase
 
         $this->assertContains('failing_onFailover', $order);
         $this->assertContains('good_onFailover', $order);
+    }
+
+    // ── afterCall response replacement ──
+
+    public function testAfterCallReturningModifiedResponseReplacesOriginal(): void
+    {
+        $mw = new class implements LlmMiddlewareInterface {
+            public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse
+            {
+                return new LlmResponse(
+                    content: $response->content . ' [sanitized]',
+                    usage: $response->usage,
+                    provider: $response->provider,
+                    model: $response->model,
+                );
+            }
+            public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
+            public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
+        };
+
+        $pipeline = new LlmMiddlewarePipeline();
+        $pipeline->add($mw);
+
+        $request = new LlmCallRequest([], [], 'openai', 'gpt-4o');
+        $original = new LlmResponse('hello', [], 'openai', 'gpt-4o');
+
+        $result = $pipeline->afterCall($request, $original);
+
+        $this->assertNotSame($original, $result);
+        $this->assertSame('hello [sanitized]', $result->content);
+    }
+
+    public function testAfterCallReturningNullPreservesOriginal(): void
+    {
+        $mw = new class implements LlmMiddlewareInterface {
+            public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse
+            {
+                return null;
+            }
+            public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
+            public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void {}
+        };
+
+        $pipeline = new LlmMiddlewarePipeline();
+        $pipeline->add($mw);
+
+        $request = new LlmCallRequest([], [], 'openai', 'gpt-4o');
+        $original = new LlmResponse('hello', [], 'openai', 'gpt-4o');
+
+        $result = $pipeline->afterCall($request, $original);
+
+        $this->assertSame($original, $result);
+    }
+
+    // ── onChunk ──
+
+    public function testOnChunkIsCalledForEachChunk(): void
+    {
+        $received = [];
+
+        $mw = new class($received) implements LlmMiddlewareInterface {
+            public function __construct(public array &$received) {}
+            public function beforeCall(LlmCallRequest $request): LlmCallRequest { return $request; }
+            public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse { return null; }
+            public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
+            public function onFailover(string $fromProvider, string $toProvider): void {}
+            public function onChunk(array $chunk): void
+            {
+                $this->received[] = $chunk;
+            }
+        };
+
+        $pipeline = new LlmMiddlewarePipeline();
+        $pipeline->add($mw);
+
+        $pipeline->onChunk(['text' => 'Hello']);
+        $pipeline->onChunk(['text' => ' world']);
+
+        $this->assertSame([['text' => 'Hello'], ['text' => ' world']], $mw->received);
     }
 }

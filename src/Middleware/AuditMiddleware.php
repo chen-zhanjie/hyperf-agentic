@@ -5,6 +5,7 @@ namespace ChenZhanjie\Agentic\Middleware;
 
 use ChenZhanjie\Agentic\AgentResult;
 use ChenZhanjie\Agentic\Contract\AgentMiddlewareInterface;
+use ChenZhanjie\Agentic\ToolCallContext;
 
 /**
  * Audit middleware — logs all tool calls with PII redaction.
@@ -19,6 +20,14 @@ class AuditMiddleware implements AgentMiddlewareInterface
         $this->auditLogger = $auditLogger !== null ? \Closure::fromCallable($auditLogger) : null;
     }
 
+    public function onAgentStart(array $agentConfig, array $options): void
+    {
+        $this->log('agent.start', [
+            'agent' => $agentConfig['persona']?->name ?? $options['agent_name'] ?? '',
+            'session_id' => $options['conversation_id'] ?? $options['session_id'] ?? null,
+        ]);
+    }
+
     public function beforeLoop(array $messages, array $agentConfig): array
     {
         return $messages;
@@ -29,25 +38,25 @@ class AuditMiddleware implements AgentMiddlewareInterface
         return $result;
     }
 
-    public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string
+    public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string
     {
         $this->log('tool.call', [
             'tool' => $name,
-            'agent' => $runContext['agent_name'] ?? '',
+            'agent' => $context->agentName,
             'arguments' => $this->redactSensitive($arguments),
-            'session_id' => $runContext['session_id'] ?? '',
+            'session_id' => $context->sessionId,
         ]);
         return null;
     }
 
-    public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void
+    public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void
     {
         $this->log('tool.result', [
             'tool' => $name,
-            'agent' => $runContext['agent_name'] ?? '',
+            'agent' => $context->agentName,
             'success' => !str_starts_with($result, 'Tool execution error'),
             'result_len' => mb_strlen($result),
-            'session_id' => $runContext['session_id'] ?? '',
+            'session_id' => $context->sessionId,
         ]);
     }
 

@@ -36,17 +36,21 @@ class LlmMiddlewarePipeline
         return $request;
     }
 
-    public function afterCall(LlmCallRequest $request, LlmResponse $response): void
+    public function afterCall(LlmCallRequest $request, LlmResponse $response): LlmResponse
     {
         foreach ($this->middlewares as $mw) {
             try {
-                $mw->afterCall($request, $response);
+                $modified = $mw->afterCall($request, $response);
+                if ($modified !== null) {
+                    $response = $modified;
+                }
             } catch (\Throwable $e) {
                 $this->logger->warning('LlmMiddleware afterCall error: ' . $e->getMessage(), [
                     'middleware' => get_class($mw),
                 ]);
             }
         }
+        return $response;
     }
 
     public function onRetry(string $provider, int $attempt, \Throwable $error): void
@@ -69,6 +73,19 @@ class LlmMiddlewarePipeline
                 $mw->onFailover($fromProvider, $toProvider);
             } catch (\Throwable $e) {
                 $this->logger->warning('LlmMiddleware onFailover error: ' . $e->getMessage(), [
+                    'middleware' => get_class($mw),
+                ]);
+            }
+        }
+    }
+
+    public function onChunk(array $chunk): void
+    {
+        foreach ($this->middlewares as $mw) {
+            try {
+                $mw->onChunk($chunk);
+            } catch (\Throwable $e) {
+                $this->logger->warning('LlmMiddleware onChunk error: ' . $e->getMessage(), [
                     'middleware' => get_class($mw),
                 ]);
             }

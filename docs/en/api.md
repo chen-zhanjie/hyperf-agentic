@@ -451,4 +451,52 @@ public function afterLlmCall(array $response, LlmCallMeta $meta): void
 
 ### Fault Tolerance
 
-Notification methods (`afterLoop`, `afterLlmCall`, `afterToolCall`) catch exceptions internally and log a warning without breaking the agent loop. Chain methods (`beforeLoop`, `beforeLlmCall`) still throw on failure since they transform data and must be correct.
+Notification methods (`afterLoop`, `afterCall`, `afterToolCall`, `onAgentStart`, `onChunk`) catch exceptions internally and log a warning without breaking the agent loop. Chain methods (`beforeLoop`, `beforeCall`) still throw on failure since they transform data and must be correct.
+
+### LlmMiddlewareInterface
+
+```php
+interface LlmMiddlewareInterface
+{
+    public function beforeCall(LlmCallRequest $request): LlmCallRequest;
+    public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse;
+    public function onRetry(string $provider, int $attempt, \Throwable $error): void;
+    public function onFailover(string $fromProvider, string $toProvider): void;
+    public function onChunk(array $chunk): void;
+}
+```
+
+- `afterCall`: Return `null` to pass through the original response, or return a new `LlmResponse` to replace it
+- `onChunk`: Called for each chunk during `chatStream()`. Use for real-time token counting, live logging
+
+### AgentMiddlewareInterface
+
+```php
+interface AgentMiddlewareInterface
+{
+    public function onAgentStart(array $agentConfig, array $options): void;
+    public function beforeLoop(array $messages, array $agentConfig): array;
+    public function afterLoop(AgentResult $result): AgentResult;
+    public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string;
+    public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void;
+}
+```
+
+- `onAgentStart`: Called once when the agent run starts, before any processing
+- `beforeToolCall` / `afterToolCall`: Receive typed `ToolCallContext` DTO instead of loose array
+
+### ToolCallContext
+
+Immutable DTO passed to `beforeToolCall` and `afterToolCall`:
+
+```php
+class ToolCallContext
+{
+    public readonly ?string $sessionId;
+    public readonly string $agentName;
+    public readonly ?string $toolCallId;
+    public readonly int $iteration;
+
+    public function with(array $overrides): self { ... }
+}
+```

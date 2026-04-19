@@ -63,7 +63,7 @@ class LlmClient
             fn(string $p, LlmCallRequest $r) => $this->doChat($p, $r->messages, $r->options),
         );
 
-        $this->middleware?->afterCall($request, $response);
+        $response = $this->middleware?->afterCall($request, $response) ?? $response;
 
         return $response;
     }
@@ -76,12 +76,27 @@ class LlmClient
         $request = new LlmCallRequest($messages, $options, $provider, $model);
         $request = $this->middleware?->beforeCall($request) ?? $request;
 
+        $middlewareOnChunk = null;
+        if ($this->middleware !== null) {
+            $pipeline = $this->middleware;
+            $middlewareOnChunk = function (array $chunk) use ($pipeline): void {
+                $pipeline->onChunk($chunk);
+            };
+        }
+
+        $wrappedOnChunk = $middlewareOnChunk !== null
+            ? function (array $chunk) use ($onChunk, $middlewareOnChunk): void {
+                $middlewareOnChunk($chunk);
+                $onChunk($chunk);
+            }
+            : $onChunk;
+
         $response = $this->retryWithMiddleware(
             $request,
-            fn(string $p, LlmCallRequest $r) => $this->doChatStream($p, $r->messages, $r->options, $onChunk),
+            fn(string $p, LlmCallRequest $r) => $this->doChatStream($p, $r->messages, $r->options, $wrappedOnChunk),
         );
 
-        $this->middleware?->afterCall($request, $response);
+        $response = $this->middleware?->afterCall($request, $response) ?? $response;
 
         return $response;
     }

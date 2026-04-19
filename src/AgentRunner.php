@@ -256,6 +256,9 @@ class AgentRunner
 
         $messages = $this->agentMiddleware->beforeLoop($messages, $agentConfig);
 
+        // Fire onAgentStart after beforeLoop so middleware has full context
+        $this->agentMiddleware->onAgentStart($agentConfig, $options);
+
         // Inject resolved model/provider into options for downstream consumers
         $options['model'] = $options['model'] ?? $options['model_override'] ?? $agentConfig['model'] ?? '';
         $options['provider'] = $options['provider'] ?? $agentConfig['provider'] ?? '';

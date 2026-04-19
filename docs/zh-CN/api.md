@@ -492,4 +492,52 @@ public function afterLlmCall(array $response, LlmCallMeta $meta): void
 
 ### 容错机制
 
-通知方法（`afterLoop`、`afterLlmCall`、`afterToolCall`）内部捕获异常并记录警告，不会中断 Agent 循环。链式方法（`beforeLoop`、`beforeLlmCall`）失败时仍然抛出异常，因为它们负责数据变换，必须保证正确性。
+通知方法（`afterLoop`、`afterCall`、`afterToolCall`、`onAgentStart`、`onChunk`）内部捕获异常并记录警告，不会中断 Agent 循环。链式方法（`beforeLoop`、`beforeCall`）失败时仍然抛出异常，因为它们负责数据变换，必须保证正确性。
+
+### LlmMiddlewareInterface
+
+```php
+interface LlmMiddlewareInterface
+{
+    public function beforeCall(LlmCallRequest $request): LlmCallRequest;
+    public function afterCall(LlmCallRequest $request, LlmResponse $response): ?LlmResponse;
+    public function onRetry(string $provider, int $attempt, \Throwable $error): void;
+    public function onFailover(string $fromProvider, string $toProvider): void;
+    public function onChunk(array $chunk): void;
+}
+```
+
+- `afterCall`：返回 `null` 透传原始响应，或返回新的 `LlmResponse` 替换
+- `onChunk`：`chatStream()` 期间每个分块调用。用于实时 token 计数、日志记录
+
+### AgentMiddlewareInterface
+
+```php
+interface AgentMiddlewareInterface
+{
+    public function onAgentStart(array $agentConfig, array $options): void;
+    public function beforeLoop(array $messages, array $agentConfig): array;
+    public function afterLoop(AgentResult $result): AgentResult;
+    public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string;
+    public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void;
+}
+```
+
+- `onAgentStart`：Agent 运行开始时调用一次，在任何处理之前
+- `beforeToolCall` / `afterToolCall`：接收类型化的 `ToolCallContext` DTO 而非松散数组
+
+### ToolCallContext
+
+传递给 `beforeToolCall` 和 `afterToolCall` 的不可变 DTO：
+
+```php
+class ToolCallContext
+{
+    public readonly ?string $sessionId;
+    public readonly string $agentName;
+    public readonly ?string $toolCallId;
+    public readonly int $iteration;
+
+    public function with(array $overrides): self { ... }
+}
+```

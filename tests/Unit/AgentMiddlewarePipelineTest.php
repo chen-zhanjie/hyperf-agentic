@@ -7,6 +7,7 @@ use PHPUnit\Framework\TestCase;
 use ChenZhanjie\Agentic\AgentResult;
 use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\Contract\AgentMiddlewareInterface;
+use ChenZhanjie\Agentic\ToolCallContext;
 
 class AgentMiddlewarePipelineTest extends TestCase
 {
@@ -74,14 +75,15 @@ class AgentMiddlewarePipelineTest extends TestCase
     {
         $mw = new class implements AgentMiddlewareInterface {
             public bool $called = false;
+            public function onAgentStart(array $agentConfig, array $options): void {}
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult
             {
                 $this->called = true;
                 return $result;
             }
-            public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string { return null; }
-            public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void {}
+            public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string { return null; }
+            public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void {}
         };
 
         $pipeline = new AgentMiddlewarePipeline();
@@ -98,7 +100,8 @@ class AgentMiddlewarePipelineTest extends TestCase
     public function testBeforeToolCallReturnsNullWhenNoMiddlewareIntercepts(): void
     {
         $pipeline = new AgentMiddlewarePipeline();
-        $result = $pipeline->beforeToolCall('search', ['query' => 'test']);
+        $context = new ToolCallContext(sessionId: 'sess-1', agentName: 'test-agent');
+        $result = $pipeline->beforeToolCall('search', ['query' => 'test'], $context);
 
         $this->assertNull($result);
     }
@@ -112,7 +115,8 @@ class AgentMiddlewarePipelineTest extends TestCase
         $pipeline = new AgentMiddlewarePipeline();
         $pipeline->add($mw);
 
-        $result = $pipeline->beforeToolCall('dangerous_tool', []);
+        $context = new ToolCallContext(sessionId: 'sess-1', agentName: 'test-agent');
+        $result = $pipeline->beforeToolCall('dangerous_tool', [], $context);
         $this->assertSame('blocked by policy', $result);
     }
 
@@ -123,21 +127,23 @@ class AgentMiddlewarePipelineTest extends TestCase
         });
         $mw2 = new class implements AgentMiddlewareInterface {
             public bool $called = false;
+            public function onAgentStart(array $agentConfig, array $options): void {}
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
-            public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string
+            public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string
             {
                 $this->called = true;
                 return null;
             }
-            public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void {}
+            public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void {}
         };
 
         $pipeline = new AgentMiddlewarePipeline();
         $pipeline->add($mw1);
         $pipeline->add($mw2);
 
-        $result = $pipeline->beforeToolCall('test', []);
+        $context = new ToolCallContext(sessionId: 'sess-1', agentName: 'test-agent');
+        $result = $pipeline->beforeToolCall('test', [], $context);
         $this->assertSame('intercepted', $result);
         $this->assertFalse($mw2->called);
     }
@@ -150,10 +156,11 @@ class AgentMiddlewarePipelineTest extends TestCase
             public bool $called = false;
             public string $capturedName = '';
             public string $capturedResult = '';
+            public function onAgentStart(array $agentConfig, array $options): void {}
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
-            public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string { return null; }
-            public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void
+            public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string { return null; }
+            public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void
             {
                 $this->called = true;
                 $this->capturedName = $name;
@@ -164,7 +171,8 @@ class AgentMiddlewarePipelineTest extends TestCase
         $pipeline = new AgentMiddlewarePipeline();
         $pipeline->add($mw);
 
-        $pipeline->afterToolCall('search', ['q' => 'test'], 'result text');
+        $context = new ToolCallContext(sessionId: 'sess-1', agentName: 'test-agent');
+        $pipeline->afterToolCall('search', ['q' => 'test'], 'result text', $context);
 
         $this->assertTrue($mw->called);
         $this->assertSame('search', $mw->capturedName);
@@ -191,6 +199,36 @@ class AgentMiddlewarePipelineTest extends TestCase
         $this->assertSame(['mw1', 'mw2', 'mw3'], $order);
     }
 
+    // ── onAgentStart ──
+
+    public function testOnAgentStartIsCalled(): void
+    {
+        $mw = new class implements AgentMiddlewareInterface {
+            public bool $called = false;
+            public array $capturedConfig = [];
+            public array $capturedOptions = [];
+            public function onAgentStart(array $agentConfig, array $options): void
+            {
+                $this->called = true;
+                $this->capturedConfig = $agentConfig;
+                $this->capturedOptions = $options;
+            }
+            public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
+            public function afterLoop(AgentResult $result): AgentResult { return $result; }
+            public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string { return null; }
+            public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void {}
+        };
+
+        $pipeline = new AgentMiddlewarePipeline();
+        $pipeline->add($mw);
+
+        $pipeline->onAgentStart(['name' => 'my-agent'], ['temperature' => 0.7]);
+
+        $this->assertTrue($mw->called);
+        $this->assertSame(['name' => 'my-agent'], $mw->capturedConfig);
+        $this->assertSame(['temperature' => 0.7], $mw->capturedOptions);
+    }
+
     // ── helpers ──
 
     private function createSpyMiddleware(string $method, callable $behavior): AgentMiddlewareInterface
@@ -200,6 +238,8 @@ class AgentMiddlewarePipelineTest extends TestCase
                 private readonly string $targetMethod,
                 private readonly \Closure $behavior,
             ) {}
+
+            public function onAgentStart(array $agentConfig, array $options): void {}
 
             public function beforeLoop(array $messages, array $agentConfig): array
             {
@@ -217,7 +257,7 @@ class AgentMiddlewarePipelineTest extends TestCase
                 return $result;
             }
 
-            public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string
+            public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string
             {
                 if ($this->targetMethod === 'beforeToolCall') {
                     return ($this->behavior)();
@@ -225,7 +265,7 @@ class AgentMiddlewarePipelineTest extends TestCase
                 return null;
             }
 
-            public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void
+            public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void
             {
                 if ($this->targetMethod === 'afterToolCall') {
                     ($this->behavior)($name, $arguments, $result);
@@ -242,14 +282,16 @@ class AgentMiddlewarePipelineTest extends TestCase
                 private readonly string $label,
             ) {}
 
+            public function onAgentStart(array $agentConfig, array $options): void {}
+
             public function beforeLoop(array $messages, array $agentConfig): array
             {
                 $this->order[] = $this->label;
                 return $messages;
             }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
-            public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string { return null; }
-            public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void {}
+            public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string { return null; }
+            public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void {}
         };
     }
 
@@ -258,13 +300,14 @@ class AgentMiddlewarePipelineTest extends TestCase
     public function testBeforeLoopPropagatesExceptions(): void
     {
         $mw = new class implements AgentMiddlewareInterface {
+            public function onAgentStart(array $agentConfig, array $options): void {}
             public function beforeLoop(array $messages, array $agentConfig): array
             {
                 throw new \RuntimeException('beforeLoop validation failed');
             }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
-            public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string { return null; }
-            public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void {}
+            public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string { return null; }
+            public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void {}
         };
 
         $pipeline = new AgentMiddlewarePipeline();
@@ -282,14 +325,15 @@ class AgentMiddlewarePipelineTest extends TestCase
 
         $failingMw = new class($order) implements AgentMiddlewareInterface {
             public function __construct(private array &$order) {}
+            public function onAgentStart(array $agentConfig, array $options): void {}
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult
             {
                 $this->order[] = 'failing_afterLoop';
                 throw new \RuntimeException('afterLoop explosion');
             }
-            public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string { return null; }
-            public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void
+            public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string { return null; }
+            public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void
             {
                 $this->order[] = 'failing_afterToolCall';
                 throw new \RuntimeException('afterToolCall explosion');
@@ -298,14 +342,15 @@ class AgentMiddlewarePipelineTest extends TestCase
 
         $goodMw = new class($order) implements AgentMiddlewareInterface {
             public function __construct(private array &$order) {}
+            public function onAgentStart(array $agentConfig, array $options): void {}
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult
             {
                 $this->order[] = 'good_afterLoop';
                 return $result;
             }
-            public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string { return null; }
-            public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void
+            public function beforeToolCall(string $name, array $arguments, ToolCallContext $context): ?string { return null; }
+            public function afterToolCall(string $name, array $arguments, string $result, ToolCallContext $context): void
             {
                 $this->order[] = 'good_afterToolCall';
             }
@@ -320,7 +365,8 @@ class AgentMiddlewarePipelineTest extends TestCase
         $this->assertTrue($result->isComplete());
 
         // afterToolCall — both run despite exception
-        $pipeline->afterToolCall('search', [], 'result');
+        $context = new ToolCallContext(sessionId: 'sess-1', agentName: 'test-agent');
+        $pipeline->afterToolCall('search', [], 'result', $context);
 
         $this->assertContains('failing_afterLoop', $order);
         $this->assertContains('good_afterLoop', $order);

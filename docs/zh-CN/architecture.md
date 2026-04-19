@@ -21,7 +21,7 @@ Layer 2: Subsystems（子系统）
     │
 Layer 3a: LLM Layer（LLM 层）
     │   LlmClient, LlmMiddlewarePipeline
-    │   (beforeCall / afterCall / onRetry / onFailover)
+    │   (beforeCall / afterCall / onRetry / onFailover / onChunk)
     │
 Layer 3b: Agent Core（Agent 核心）
     │   AgentRunner, AgentMiddlewarePipeline, ToolDispatcher,
@@ -98,9 +98,9 @@ AgentRunner 实现了标准的 ReAct（Reasoning + Acting）循环：
 
 v0.10 将 Layer 3 拆分为 LLM 层（3a）和 Agent 层（3b），使 `chat()` 和 `chatStream()` 等纯对话调用无需经过 AgentRunner 循环。
 
-**Layer 3a — LLM 层**：`LlmClient` + `LlmMiddlewarePipeline`。中间件钩子为 `beforeCall`、`afterCall`、`onRetry`、`onFailover`，返回 `LlmResponse` DTO。`Agentic::chat()` 和 `chatStream()` 直接调用 `LlmClient`，绕过 AgentRunner。
+**Layer 3a — LLM 层**：`LlmClient` + `LlmMiddlewarePipeline`。中间件钩子为 `beforeCall`、`afterCall`（返回 `?LlmResponse` 可变换响应）、`onRetry`、`onFailover`、`onChunk`（流式分块通知），返回 `LlmResponse` DTO。`Agentic::chat()` 和 `chatStream()` 直接调用 `LlmClient`，绕过 AgentRunner。
 
-**Layer 3b — Agent 层**：`AgentRunner` + `AgentMiddlewarePipeline`。中间件钩子为 `beforeLoop`、`afterLoop`、`beforeToolCall`、`afterToolCall`。AgentRunner 内部的 `TurnExecutor` 使用 `LlmClient`（Layer 3a）完成每次 LLM 调用。
+**Layer 3b — Agent 层**：`AgentRunner` + `AgentMiddlewarePipeline`。中间件钩子为 `onAgentStart`（运行开始通知）、`beforeLoop`、`afterLoop`、`beforeToolCall`、`afterToolCall`（接受 `ToolCallContext` DTO）。AgentRunner 内部的 `TurnExecutor` 使用 `LlmClient`（Layer 3a）完成每次 LLM 调用。
 
 ### LlmCallRequest
 
@@ -115,6 +115,21 @@ v0.10 将 Layer 3 拆分为 LLM 层（3a）和 Agent 层（3b），使 `chat()` 
 
 ```php
 $newRequest = $request->with(['model' => 'gpt-4o', 'options' => ['temperature' => 0.2]]);
+```
+
+### ToolCallContext
+
+`ToolCallContext` 是不可变 DTO，传递给 Agent 中间件的工具调用钩子（`beforeToolCall` / `afterToolCall`），替代之前的松散 `array $runContext`：
+
+- `sessionId` — 会话 ID
+- `agentName` — Agent 名称
+- `toolCallId` — 工具调用 ID
+- `iteration` — 当前迭代次数
+
+通过 `with()` 方法返回新实例，实现不可变修改：
+
+```php
+$newContext = $context->with(['iteration' => 5]);
 ```
 
 ### 工具分发链
@@ -284,6 +299,7 @@ src/
 ├── TurnExecutor.php           # Layer 3b: 单轮执行（统一同步/流式）
 ├── Agent.php          # Agent DTO（配置即数据）
 ├── ToolDispatcher.php # Layer 3b: 工具分发链（护栏 → 权限 → 执行）
+├── ToolCallContext.php # Agent 中间件工具调用钩子的不可变上下文 DTO
 ├── LoopState.php      # 每次请求的可变循环累加器
 ├── AgentRunContext.php # Per-Request 不可变上下文
 ├── AgentResult.php    # Agent 执行结果
