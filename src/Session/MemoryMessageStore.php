@@ -55,4 +55,24 @@ class MemoryMessageStore implements MessageStoreInterface
 
         return false;
     }
+
+    public function recallLast(string $conversationId, string $reason): string
+    {
+        if (!isset($this->conversations[$conversationId])) {
+            return '';
+        }
+
+        for ($i = count($this->conversations[$conversationId]) - 1; $i >= 0; --$i) {
+            if (($this->conversations[$conversationId][$i]['role'] ?? '') === 'assistant'
+                && empty($this->conversations[$conversationId][$i]['recalled'])
+            ) {
+                $this->conversations[$conversationId][$i]['recalled'] = true;
+                $this->conversations[$conversationId][$i]['recall_reason'] = $reason;
+                $this->conversations[$conversationId][$i]['content'] = '[消息已撤回]';
+                return (string) ($this->conversations[$conversationId][$i]['id'] ?? "index:{$i}");
+            }
+        }
+
+        return '';
+    }
 }

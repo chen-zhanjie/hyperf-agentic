@@ -26,4 +26,7 @@ interface MessageStoreInterface
 
     /** Mark a message as recalled, replacing its content. Returns true if found and recalled. */
     public function recall(string $conversationId, string $messageId, string $reason): bool;
+
+    /** Recall the last assistant message in the conversation. Returns the recalled message_id, or empty string if none found. */
+    public function recallLast(string $conversationId, string $reason): string;
 }

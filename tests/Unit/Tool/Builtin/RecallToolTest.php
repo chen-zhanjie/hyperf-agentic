@@ -174,13 +174,92 @@ class RecallToolTest extends TestCase
         $this->assertArrayHasKey('error', $decoded);
     }
 
+    public function testExecuteRecallLastWithoutMessageId(): void
+    {
+        $store = new MemoryMessageStore();
+        $store->append('conv-1', [
+            ['id' => 'msg-1', 'role' => 'user', 'content' => 'Hello'],
+            ['id' => 'msg-2', 'role' => 'assistant', 'content' => 'Bad response'],
+        ]);
+
+        $tool = new RecallTool($store);
+        $result = $tool->execute([
+            'conversation_id' => 'conv-1',
+            'reason' => 'self-correction',
+        ]);
+
+        $decoded = json_decode($result, true);
+        $this->assertTrue($decoded['recalled']);
+        $this->assertSame('msg-2', $decoded['message_id']);
+
+        // Verify store state
+        $messages = $store->load('conv-1');
+        $this->assertSame('[消息已撤回]', $messages[1]['content']);
+        $this->assertFalse(isset($messages[0]['recalled']));
+    }
+
+    public function testExecuteRecallLastWithCurrentKeyword(): void
+    {
+        $store = new MemoryMessageStore();
+        $store->append('conv-1', [
+            ['id' => 'msg-1', 'role' => 'assistant', 'content' => 'Bad'],
+        ]);
+
+        $tool = new RecallTool($store);
+        $result = $tool->execute([
+            'conversation_id' => 'conv-1',
+            'message_id' => 'current',
+            'reason' => 'error',
+        ]);
+
+        $decoded = json_decode($result, true);
+        $this->assertTrue($decoded['recalled']);
+        $this->assertSame('msg-1', $decoded['message_id']);
+    }
+
+    public function testExecuteRecallLastSkipsAlreadyRecalled(): void
+    {
+        $store = new MemoryMessageStore();
+        $store->append('conv-1', [
+            ['id' => 'msg-1', 'role' => 'assistant', 'content' => 'Old bad', 'recalled' => true],
+            ['id' => 'msg-2', 'role' => 'assistant', 'content' => 'New bad'],
+        ]);
+
+        $tool = new RecallTool($store);
+        $result = $tool->execute([
+            'conversation_id' => 'conv-1',
+            'reason' => 'test',
+        ]);
+
+        $decoded = json_decode($result, true);
+        $this->assertTrue($decoded['recalled']);
+        $this->assertSame('msg-2', $decoded['message_id']);
+    }
+
+    public function testExecuteRecallLastNoAssistantMessage(): void
+    {
+        $store = new MemoryMessageStore();
+        $store->append('conv-1', [
+            ['id' => 'msg-1', 'role' => 'user', 'content' => 'Hello'],
+        ]);
+
+        $tool = new RecallTool($store);
+        $result = $tool->execute([
+            'conversation_id' => 'conv-1',
+            'reason' => 'test',
+        ]);
+
+        $decoded = json_decode($result, true);
+        $this->assertFalse($decoded['recalled']);
+    }
+
     public function testParametersHasRequiredFields(): void
     {
         $tool = new RecallTool();
         $params = $tool->parameters();
 
         $this->assertSame('object', $params['type']);
-        $this->assertContains('message_id', $params['required']);
         $this->assertContains('reason', $params['required']);
+        $this->assertNotContains('message_id', $params['required']);
     }
 }

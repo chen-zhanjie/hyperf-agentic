@@ -26,7 +26,7 @@ class RecallTool implements ToolInterface
 
     public function description(): string
     {
-        return '撤回已发送的消息。当你发现自己之前的回复包含错误、不当内容或需要更正时，使用此工具撤回该消息。必须提供有效的 message_id（消息的唯一标识符）和 conversation_id（会话标识符）。如果不确定 message_id，请先询问用户。';
+        return '撤回最近一条 assistant 消息。当需要更正错误回复、撤回不当内容时使用。不传 message_id 或传 "current" 表示撤回最近一条 assistant 消息。';
     }
 
     public function parameters(): array
@@ -40,7 +40,7 @@ class RecallTool implements ToolInterface
                 ],
                 'message_id' => [
                     'type' => 'string',
-                    'description' => '要撤回的消息 ID',
+                    'description' => '要撤回的消息 ID。不传或传 "current" 表示撤回最近一条 assistant 消息。',
                 ],
                 'reason' => [
                     'type' => 'string',
@@ -51,7 +51,7 @@ class RecallTool implements ToolInterface
                     'description' => '可选：替换为的安全内容',
                 ],
             ],
-            'required' => ['message_id', 'reason'],
+            'required' => ['reason'],
         ];
     }
 
@@ -61,10 +61,6 @@ class RecallTool implements ToolInterface
         $reason = (string) ($arguments['reason'] ?? '');
         $conversationId = (string) ($arguments['conversation_id'] ?? '');
         $replacement = $arguments['replacement'] ?? null;
-
-        if ($messageId === '') {
-            return json_encode(['recalled' => false, 'error' => 'message_id is required'], JSON_UNESCAPED_UNICODE);
-        }
 
         if ($this->messageStore === null) {
             return json_encode([
@@ -82,6 +78,26 @@ class RecallTool implements ToolInterface
             ], JSON_UNESCAPED_UNICODE);
         }
 
+        // Empty or "current" → recall last assistant message
+        if ($messageId === '' || $messageId === 'current') {
+            $recalledId = $this->messageStore->recallLast($conversationId, $reason);
+
+            if ($recalledId === '') {
+                return json_encode([
+                    'recalled' => false,
+                    'message_id' => 'current',
+                    'error' => 'No assistant message found to recall',
+                ], JSON_UNESCAPED_UNICODE);
+            }
+
+            return json_encode([
+                'recalled' => true,
+                'message_id' => $recalledId,
+                'reason' => $reason,
+            ], JSON_UNESCAPED_UNICODE);
+        }
+
+        // Specific message_id → recall by ID
         $success = $this->messageStore->recall($conversationId, $messageId, $reason);
 
         if (!$success) {
