@@ -70,7 +70,7 @@ class ToolDispatcher
                 'arguments' => $arguments,
             ]);
 
-            $toolResult = $this->dispatch($toolName, $arguments, $context, $onEvent);
+            $toolResult = $this->dispatch($toolName, $arguments, $context, $onEvent, $callId);
 
             $this->emitEvent($onEvent, AgentEventType::TOOL_RESULT, [
                 'call_id' => $callId,
@@ -95,7 +95,7 @@ class ToolDispatcher
      * 4. Human approval prompt (if ASK)
      * 5. Execute via middleware → agent handler → ToolRegistry
      */
-    public function dispatch(string $name, array $arguments, AgentRunContext $context, ?callable $onEvent = null): string
+    public function dispatch(string $name, array $arguments, AgentRunContext $context, ?callable $onEvent = null, ?string $callId = null): string
     {
         // Step 0: Tool guardrail — check input (can block or sanitize arguments)
         $inputCheck = $context->toolGuardrails->checkToolInput($name, $arguments);
@@ -113,7 +113,7 @@ class ToolDispatcher
                 'name' => $name,
                 'source' => 'approval_store',
             ]);
-            return $this->execute($name, $arguments, $context, $onEvent);
+            return $this->execute($name, $arguments, $context, $onEvent, $callId);
         }
 
         // Step 0.5b: Permission check — deny/ask based on risk level
@@ -177,18 +177,19 @@ class ToolDispatcher
         }
 
         // Step 1+: Execute the tool
-        return $this->execute($name, $arguments, $context, $onEvent);
+        return $this->execute($name, $arguments, $context, $onEvent, $callId);
     }
 
     /**
      * Execute a tool after all permission checks have passed.
      * Handles middleware interception, agent handlers, and ToolRegistry dispatch.
      */
-    private function execute(string $name, array $arguments, AgentRunContext $context, ?callable $onEvent = null): string
+    private function execute(string $name, array $arguments, AgentRunContext $context, ?callable $onEvent = null, ?string $callId = null): string
     {
         $runContext = new ToolCallContext(
             sessionId: $context->sessionId,
             agentName: $context->agentName ?? '',
+            toolCallId: $callId,
         );
 
         // Step 1: Middleware interception
