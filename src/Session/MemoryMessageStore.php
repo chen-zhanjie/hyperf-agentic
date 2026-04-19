@@ -38,10 +38,10 @@ class MemoryMessageStore implements MessageStoreInterface
         return isset($this->conversations[$conversationId]) && !empty($this->conversations[$conversationId]);
     }
 
-    public function recall(string $conversationId, string $messageId, string $reason): void
+    public function recall(string $conversationId, string $messageId, string $reason): bool
     {
         if (!isset($this->conversations[$conversationId])) {
-            return;
+            return false;
         }
 
         foreach ($this->conversations[$conversationId] as $i => $msg) {
@@ -49,8 +49,10 @@ class MemoryMessageStore implements MessageStoreInterface
                 $this->conversations[$conversationId][$i]['recalled'] = true;
                 $this->conversations[$conversationId][$i]['recall_reason'] = $reason;
                 $this->conversations[$conversationId][$i]['content'] = '[消息已撤回]';
-                break;
+                return true;
             }
         }
+
+        return false;
     }
 }

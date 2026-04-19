@@ -26,7 +26,7 @@ class RecallTool implements ToolInterface
 
     public function description(): string
     {
-        return '撤回已发送的消息。当你发现自己之前的回复包含错误、不当内容或需要更正时，使用此工具撤回该消息。';
+        return '撤回已发送的消息。当你发现自己之前的回复包含错误、不当内容或需要更正时，使用此工具撤回该消息。必须提供有效的 message_id（消息的唯一标识符）和 conversation_id（会话标识符）。如果不确定 message_id，请先询问用户。';
     }
 
     public function parameters(): array
@@ -62,8 +62,34 @@ class RecallTool implements ToolInterface
         $conversationId = (string) ($arguments['conversation_id'] ?? '');
         $replacement = $arguments['replacement'] ?? null;
 
-        if ($this->messageStore !== null && $conversationId !== '' && $messageId !== '') {
-            $this->messageStore->recall($conversationId, $messageId, $reason);
+        if ($messageId === '') {
+            return json_encode(['recalled' => false, 'error' => 'message_id is required'], JSON_UNESCAPED_UNICODE);
+        }
+
+        if ($this->messageStore === null) {
+            return json_encode([
+                'recalled' => false,
+                'message_id' => $messageId,
+                'error' => 'No message store configured',
+            ], JSON_UNESCAPED_UNICODE);
+        }
+
+        if ($conversationId === '') {
+            return json_encode([
+                'recalled' => false,
+                'message_id' => $messageId,
+                'error' => 'conversation_id is required for recall',
+            ], JSON_UNESCAPED_UNICODE);
+        }
+
+        $success = $this->messageStore->recall($conversationId, $messageId, $reason);
+
+        if (!$success) {
+            return json_encode([
+                'recalled' => false,
+                'message_id' => $messageId,
+                'error' => 'Message not found in conversation',
+            ], JSON_UNESCAPED_UNICODE);
         }
 
         $result = [

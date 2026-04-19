@@ -28,10 +28,16 @@ class RecallToolTest extends TestCase
         $this->assertFalse($tool->isParallelAllowed());
     }
 
-    public function testExecuteReturnsRecalledConfirmation(): void
+    public function testExecuteReturnsRecalledConfirmationWithStore(): void
     {
-        $tool = new RecallTool();
+        $store = new MemoryMessageStore();
+        $store->append('conv-1', [
+            ['id' => 'msg-123', 'role' => 'assistant', 'content' => 'Bad'],
+        ]);
+
+        $tool = new RecallTool($store);
         $result = $tool->execute([
+            'conversation_id' => 'conv-1',
             'message_id' => 'msg-123',
             'reason' => 'toxic content',
         ]);
@@ -44,8 +50,14 @@ class RecallToolTest extends TestCase
 
     public function testExecuteWithOptionalReplacement(): void
     {
-        $tool = new RecallTool();
+        $store = new MemoryMessageStore();
+        $store->append('conv-1', [
+            ['id' => 'msg-456', 'role' => 'assistant', 'content' => 'Bad'],
+        ]);
+
+        $tool = new RecallTool($store);
         $result = $tool->execute([
+            'conversation_id' => 'conv-1',
             'message_id' => 'msg-456',
             'reason' => 'PII detected',
             'replacement' => '[内容已撤回]',
@@ -102,7 +114,7 @@ class RecallToolTest extends TestCase
         $this->assertSame('Hello', $messages[0]['content']);
     }
 
-    public function testExecuteWithoutMessageStoreStillReturnsConfirmation(): void
+    public function testExecuteWithoutMessageStoreReturnsError(): void
     {
         $tool = new RecallTool();
         $result = $tool->execute([
@@ -111,7 +123,55 @@ class RecallToolTest extends TestCase
         ]);
 
         $decoded = json_decode($result, true);
-        $this->assertTrue($decoded['recalled']);
+        $this->assertFalse($decoded['recalled']);
+        $this->assertArrayHasKey('error', $decoded);
+    }
+
+    public function testExecuteWithEmptyMessageIdReturnsError(): void
+    {
+        $store = new MemoryMessageStore();
+        $tool = new RecallTool($store);
+        $result = $tool->execute([
+            'message_id' => '',
+            'reason' => 'test',
+        ]);
+
+        $decoded = json_decode($result, true);
+        $this->assertFalse($decoded['recalled']);
+        $this->assertArrayHasKey('error', $decoded);
+    }
+
+    public function testExecuteWithEmptyConversationIdReturnsError(): void
+    {
+        $store = new MemoryMessageStore();
+        $tool = new RecallTool($store);
+        $result = $tool->execute([
+            'message_id' => 'msg-1',
+            'reason' => 'test',
+        ]);
+
+        $decoded = json_decode($result, true);
+        $this->assertFalse($decoded['recalled']);
+        $this->assertArrayHasKey('error', $decoded);
+    }
+
+    public function testExecuteWithInvalidMessageIdReturnsNotFound(): void
+    {
+        $store = new MemoryMessageStore();
+        $store->append('conv-1', [
+            ['id' => 'msg-1', 'role' => 'assistant', 'content' => 'Hello'],
+        ]);
+
+        $tool = new RecallTool($store);
+        $result = $tool->execute([
+            'conversation_id' => 'conv-1',
+            'message_id' => 'nonexistent',
+            'reason' => 'test',
+        ]);
+
+        $decoded = json_decode($result, true);
+        $this->assertFalse($decoded['recalled']);
+        $this->assertArrayHasKey('error', $decoded);
     }
 
     public function testParametersHasRequiredFields(): void

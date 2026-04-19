@@ -24,6 +24,6 @@ interface MessageStoreInterface
     /** Check if a conversation exists */
     public function exists(string $conversationId): bool;
 
-    /** Mark a message as recalled, replacing its content */
-    public function recall(string $conversationId, string $messageId, string $reason): void;
+    /** Mark a message as recalled, replacing its content. Returns true if found and recalled. */
+    public function recall(string $conversationId, string $messageId, string $reason): bool;
 }
