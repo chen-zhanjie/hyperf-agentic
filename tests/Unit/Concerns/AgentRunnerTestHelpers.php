@@ -3,13 +3,13 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic\Tests\Unit\Concerns;
 
+use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface;
 use ChenZhanjie\Agentic\Contract\ToolInterface;
 use ChenZhanjie\Agentic\Contract\ToolPermissionPolicyInterface;
 use ChenZhanjie\Agentic\GuardrailRunner;
 use ChenZhanjie\Agentic\LlmClient;
-use ChenZhanjie\Agentic\MiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\Skill\SkillRegistry;
@@ -22,7 +22,7 @@ trait AgentRunnerTestHelpers
         LlmClient $llmClient,
         ?ToolRegistry $toolRegistry = null,
         ?GuardrailRunner $guardrailRunner = null,
-        ?MiddlewarePipeline $pipeline = null,
+        ?AgentMiddlewarePipeline $pipeline = null,
         ?SkillRegistry $skillRegistry = null,
         ?ToolGuardrailRunner $toolGuardrailRunner = null,
         ?ToolPermissionPolicyInterface $permissionPolicy = null,
@@ -33,7 +33,7 @@ trait AgentRunnerTestHelpers
             promptBuilder: new \ChenZhanjie\Agentic\PromptBuilder(),
             toolRegistry: $toolRegistry ?? new ToolRegistry(),
             guardrailRunner: $guardrailRunner ?? new GuardrailRunner(),
-            middleware: $pipeline ?? new MiddlewarePipeline(),
+            agentMiddleware: $pipeline ?? new AgentMiddlewarePipeline(),
             toolGuardrailRunner: $toolGuardrailRunner ?? new ToolGuardrailRunner(),
             permissionPolicy: $permissionPolicy ?? new ConfigToolPermissionPolicy(),
             approvalStore: $approvalStore,
@@ -50,6 +50,10 @@ trait AgentRunnerTestHelpers
             adapterFactory: function (string $type, string $provider, array $config, array $messages, array $options) use ($responses, &$index): array {
                 $response = $responses[$index] ?? ['content' => 'no more responses'];
                 $index++;
+                // Ensure model is present in mock response
+                if (!isset($response['model'])) {
+                    $response['model'] = 'test-model';
+                }
                 return $response;
             },
         );
@@ -79,6 +83,7 @@ trait AgentRunnerTestHelpers
                         ]],
                     ],
                     'usage' => $this->usage(100, 30),
+                    'model' => 'test-model',
                 ];
             },
         );

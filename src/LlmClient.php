@@ -10,17 +10,10 @@ use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
 /**
- * Multi-provider LLM client with load balancing and retry.
+ * Multi-provider LLM client with load balancing, retry, and middleware hooks.
  *
- * Supports two built-in protocols:
- * - 'openai': OpenAI-compatible /v1/chat/completions
- * - 'anthropic': Anthropic /v1/messages
- *
- * Each provider config declares its protocol via the 'protocol' key.
- * If omitted, defaults to 'openai' for backward compatibility.
- *
- * Custom adapters can be injected via the $adapterFactory parameter,
- * or by pre-building LlmAdapterInterface instances.
+ * Returns structured LlmResponse DTOs with actual provider/model from the API response.
+ * Supports its own middleware pipeline (LlmMiddlewarePipeline) for per-call lifecycle hooks.
  */
 class LlmClient
 {
@@ -35,12 +28,15 @@ class LlmClient
 
     private readonly ?\Closure $adapterFactory;
 
+    private readonly ?LlmMiddlewarePipeline $middleware;
+
     public function __construct(
         array $providerConfigs = [],
         string $defaultProvider = 'openai',
         array $retryConfig = [],
         ?LoggerInterface $logger = null,
         ?callable $adapterFactory = null,
+        ?LlmMiddlewarePipeline $middleware = null,
     ) {
         $this->providerConfigs = $providerConfigs;
         $this->defaultProvider = $defaultProvider;
@@ -51,28 +47,43 @@ class LlmClient
         ], $retryConfig);
         $this->logger = $logger ?? new NullLogger();
         $this->adapterFactory = $adapterFactory !== null ? \Closure::fromCallable($adapterFactory) : null;
+        $this->middleware = $middleware;
     }
 
-    public function chat(array $messages, array $options = []): array
+    public function chat(array $messages, array $options = []): LlmResponse
     {
         $provider = $options['provider'] ?? $this->defaultProvider;
-        $providers = $this->getFailoverChain($provider);
+        $model = $options['model'] ?? $this->providerConfigs[$provider]['model'] ?? 'gpt-4o';
 
-        return $this->retry(
-            fn(string $p) => $this->doChat($p, $messages, $options),
-            $providers,
+        $request = new LlmCallRequest($messages, $options, $provider, $model);
+        $request = $this->middleware?->beforeCall($request) ?? $request;
+
+        $response = $this->retryWithMiddleware(
+            $request,
+            fn(string $p, LlmCallRequest $r) => $this->doChat($p, $r->messages, $r->options),
         );
+
+        $this->middleware?->afterCall($request, $response);
+
+        return $response;
     }
 
-    public function chatStream(array $messages, array $options, callable $onChunk): array
+    public function chatStream(array $messages, array $options, callable $onChunk): LlmResponse
     {
         $provider = $options['provider'] ?? $this->defaultProvider;
-        $providers = $this->getFailoverChain($provider);
+        $model = $options['model'] ?? $this->providerConfigs[$provider]['model'] ?? 'gpt-4o';
 
-        return $this->retry(
-            fn(string $p) => $this->doChatStream($p, $messages, $options, $onChunk),
-            $providers,
+        $request = new LlmCallRequest($messages, $options, $provider, $model);
+        $request = $this->middleware?->beforeCall($request) ?? $request;
+
+        $response = $this->retryWithMiddleware(
+            $request,
+            fn(string $p, LlmCallRequest $r) => $this->doChatStream($p, $r->messages, $r->options, $onChunk),
         );
+
+        $this->middleware?->afterCall($request, $response);
+
+        return $response;
     }
 
     /**
@@ -100,6 +111,17 @@ class LlmClient
 
     // --- Internal ---
 
+    private function sleep(int $ms): void
+    {
+        if (\function_exists('\\Swoole\\Coroutine\\System::sleep')) {
+            \Swoole\Coroutine\System::sleep($ms / 1000);
+        } elseif (class_exists(\Hyperf\Coroutine\Coroutine::class) && \Hyperf\Coroutine\Coroutine::inCoroutine()) {
+            \Swoole\Coroutine\System::sleep($ms / 1000);
+        } else {
+            usleep($ms * 1000);
+        }
+    }
+
     protected function doChat(string $provider, array $messages, array $options): array
     {
         $config = $this->getProviderConfig($provider);
@@ -124,25 +146,16 @@ class LlmClient
         return $this->callBuiltInAdapterStream($provider, $config, $messages, $options, $onChunk);
     }
 
-    /**
-     * Dispatch to the correct built-in adapter based on provider protocol.
-     */
     private function callBuiltInAdapter(string $provider, array $config, array $messages, array $options): array
     {
         return $this->createAdapter($provider, $config)->chat($messages, $options);
     }
 
-    /**
-     * Dispatch streaming request to the correct built-in adapter.
-     */
     private function callBuiltInAdapterStream(string $provider, array $config, array $messages, array $options, callable $onChunk): array
     {
         return $this->createAdapter($provider, $config)->chatStream($messages, $options, $onChunk);
     }
 
-    /**
-     * Create a protocol adapter for the given provider config.
-     */
     private function createAdapter(string $provider, array $config): LlmAdapterInterface
     {
         $protocol = $config['protocol'] ?? 'openai';
@@ -185,23 +198,43 @@ class LlmClient
     }
 
     /**
-     * Retry with exponential backoff + jitter per provider.
+     * Retry with exponential backoff + jitter per provider, with middleware hooks.
      * Each provider gets max_attempts retries; then failover to next.
      */
-    private function retry(callable $operation, array $providers): mixed
+    private function retryWithMiddleware(LlmCallRequest $request, callable $operation): LlmResponse
     {
+        $providers = $this->getFailoverChain($request->provider);
         $maxAttempts = $this->retryConfig['max_attempts'];
         $baseDelay = $this->retryConfig['base_delay_ms'];
         $maxDelay = $this->retryConfig['max_delay_ms'];
 
         $lastException = null;
 
-        foreach ($providers as $provider) {
+        foreach ($providers as $i => $provider) {
+            if ($i > 0) {
+                $this->middleware?->onFailover($providers[$i - 1], $provider);
+            }
+
             $attempt = 0;
 
             while ($attempt < $maxAttempts) {
+                $startMs = (int) (hrtime(true) / 1_000_000);
+
                 try {
-                    return $operation($provider);
+                    $raw = $operation($provider, $request);
+                    $latencyMs = (int) (hrtime(true) / 1_000_000) - $startMs;
+
+                    $actualModel = $raw['model'] ?? $request->model;
+
+                    return new LlmResponse(
+                        content: is_string($raw['content'] ?? null) ? $raw['content'] : (string) ($raw['content'] ?? ''),
+                        usage: $raw['usage'] ?? [],
+                        provider: $provider,
+                        model: $actualModel,
+                        reasoningContent: $raw['reasoning_content'] ?? null,
+                        toolCalls: $raw['tool_calls'] ?? [],
+                        latencyMs: $latencyMs,
+                    );
                 } catch (\Throwable $e) {
                     $lastException = $e;
                     ++$attempt;
@@ -210,16 +243,17 @@ class LlmClient
                         'error' => $e->getMessage(),
                     ]);
 
+                    $this->middleware?->onRetry($provider, $attempt, $e);
+
                     if ($attempt < $maxAttempts) {
                         $delay = min(
                             (int) ($baseDelay * pow(2, $attempt - 1)) + random_int(0, 500),
                             $maxDelay,
                         );
-                        usleep($delay * 1000);
+                        $this->sleep($delay);
                     }
                 }
             }
-            // Exhausted retries for this provider, failover to next
         }
 
         throw new \RuntimeException(

@@ -43,18 +43,18 @@ class ConfigProvider
             Loader\AnnotationToolLoader::class => Loader\AnnotationToolLoader::class,
             Loader\ConfigToolLoader::class => Loader\ConfigToolLoader::class,
             Loader\SkillLoader::class => Loader\SkillLoader::class,
-            // Factories: Hyperf DI instantiates the factory class (resolving constructor deps)
-            // then calls __invoke() to produce the actual instance.
-            // Override in your project config to customize skills_directory or tool loading.
             Skill\SkillRegistry::class => SkillRegistryFactory::class,
             ToolRegistry::class => ToolRegistryFactory::class,
 
-            // Layer 3: Agent Core
-            PromptBuilder::class => PromptBuilder::class,
+            // Layer 3a: LLM Layer
+            LlmMiddlewarePipeline::class => LlmMiddlewarePipeline::class,
             LlmClient::class => LlmClientFactory::class,
+
+            // Layer 3b: Agent Core
+            PromptBuilder::class => PromptBuilder::class,
             GuardrailRunner::class => GuardrailRunner::class,
             ToolGuardrailRunner::class => ToolGuardrailRunner::class,
-            MiddlewarePipeline::class => MiddlewarePipeline::class,
+            AgentMiddlewarePipeline::class => AgentMiddlewarePipeline::class,
             ToolDispatcher::class => ToolDispatcher::class,
             AgentRunner::class => AgentRunner::class,
 

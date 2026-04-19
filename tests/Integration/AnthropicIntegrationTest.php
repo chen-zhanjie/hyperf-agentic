@@ -6,7 +6,7 @@ namespace ChenZhanjie\Agentic\Tests\Integration;
 use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\Contract\ToolInterface;
 use ChenZhanjie\Agentic\GuardrailRunner;
-use ChenZhanjie\Agentic\MiddlewarePipeline;
+use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\PromptBuilder;
@@ -142,7 +142,7 @@ class AnthropicIntegrationTest extends TestCase
             promptBuilder: new PromptBuilder(),
             toolRegistry: $registry,
             guardrailRunner: new GuardrailRunner(),
-            middleware: new MiddlewarePipeline(),
+            agentMiddleware: new AgentMiddlewarePipeline(),
             toolGuardrailRunner: new ToolGuardrailRunner(),
             permissionPolicy: new ConfigToolPermissionPolicy(),
         );

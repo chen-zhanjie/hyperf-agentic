@@ -17,6 +17,7 @@ class AgenticFactory
         $agentDefs = $config->get('agentic.agents', []);
         $defaults = $config->get('agentic.agentic', []);
 
+        $llmClient = $container->get(LlmClient::class);
         $runner = $container->get(AgentRunner::class);
         $toolRegistry = $container->get(ToolRegistry::class);
         $promptBuilder = $container->get(PromptBuilder::class);
@@ -26,6 +27,7 @@ class AgenticFactory
         $approvalStore = $this->optionalGet($container, PermissionApprovalStoreInterface::class);
 
         return new Agentic(
+            llmClient: $llmClient,
             runner: $runner,
             toolRegistry: $toolRegistry,
             promptBuilder: $promptBuilder,

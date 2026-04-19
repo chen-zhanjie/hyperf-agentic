@@ -13,7 +13,7 @@ use ChenZhanjie\Agentic\GuardrailRunner;
 use ChenZhanjie\Agentic\IterationBudget;
 use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\LoopState;
-use ChenZhanjie\Agentic\MiddlewarePipeline;
+use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\PromptBuilder;
@@ -28,13 +28,12 @@ class TurnExecutorTest extends TestCase
     private function createExecutor(LlmClient $llmClient, ?ToolRegistry $registry = null): TurnExecutor
     {
         $toolRegistry = $registry ?? new ToolRegistry();
-        $pipeline = new MiddlewarePipeline();
+        $pipeline = new AgentMiddlewarePipeline();
         $policy = new ConfigToolPermissionPolicy();
 
         return new TurnExecutor(
             llmClient: $llmClient,
             promptBuilder: new PromptBuilder(),
-            middleware: $pipeline,
             toolDispatcher: new ToolDispatcher($toolRegistry, $pipeline, $policy),
         );
     }
@@ -50,22 +49,6 @@ class TurnExecutorTest extends TestCase
                 $index++;
                 return $response;
             },
-        );
-    }
-
-    private function createStreamMockLlm(array $streamChunks, array $finalResponse): LlmClient
-    {
-        return new LlmClient(
-            providerConfigs: ['test' => ['model' => 'test-model']],
-            defaultProvider: 'test',
-            adapterFactory: function (string $type) use ($streamChunks, $finalResponse): array {
-                if ($type === 'chatStream') {
-                    // Return final response — but content should come from chunks
-                    return $finalResponse;
-                }
-                return $finalResponse;
-            },
-            retryConfig: ['max_attempts' => 1],
         );
     }
 

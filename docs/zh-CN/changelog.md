@@ -5,20 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-04-19
+
+### 新增
+
+- **显式 SSL 验证** — `OpenAiAdapter` 和 `AnthropicAdapter` 现在显式设置 `CURLOPT_SSL_VERIFYPEER` 和 `CURLOPT_SSL_VERIFYHOST`，防止配置错误环境下的不安全默认值
+- **链式中间件错误日志** — `LlmMiddlewarePipeline::beforeCall()` 和 `AgentMiddlewarePipeline::beforeLoop()` 现在在重新抛出异常前记录 warning 日志，提升中间件故障的可调试性
+- **协程感知休眠** — `LlmClient` 在协程环境中使用 `Swoole\Coroutine\System::sleep()`，避免重试退避期间阻塞 Worker 进程
+- **beforeToolCall 容错** — `AgentMiddlewarePipeline::beforeToolCall()` 现在捕获中间件异常并记录 warning 日志，返回 `null`（透传）而非崩溃工具分发链
+
+### 修复
+
+- **错误消息中的 API 密钥泄漏** — `OpenAiAdapter` 和 `AnthropicAdapter` 的错误消息现在将响应体截断为 200 字符，防止凭据或敏感数据意外暴露在日志中
+- **硬编码中文字符串** — `ToolDispatcher` 工具执行错误消息从中文改为英文，保持一致性
+- **AuditMiddleware 成功检测** — 修复匹配旧中文错误字符串（`'工具执行错误'`），现在匹配更新后的英文 `'Tool execution error'` 前缀
+
 ## [0.9.0] - 2026-04-17
 
 ### 新增
 
-- **`LlmCallMeta` DTO** — 只读 DTO，传递给 `MiddlewareInterface::afterLlmCall()`，包含 `provider`、`model`、`promptTokens`、`completionTokens` 和 `totalTokens`
+- **`LlmCallMeta` DTO** — 只读 DTO，传递给 `LlmMiddlewareInterface::afterCall()`，包含 `provider`、`model`、`promptTokens`、`completionTokens` 和 `totalTokens`
 - **`LlmResponse` DTO** — 只读 DTO，由 `Agentic::chat()` 和 `Agentic::chatStream()` 返回，包含 `content`、`usage`、`model`、`provider`、`reasoningContent`、`toolCalls`，以及用于向后兼容的 `toArray()`
-- **中间件容错** — 通知方法（`afterLoop`、`afterLlmCall`、`afterToolCall`）现在捕获异常并继续执行，而不是中断 Agent 循环。链式方法（`beforeLoop`、`beforeLlmCall`）失败时仍然抛出异常
+- **中间件容错** — 通知方法（`afterLoop`、`afterCall`、`afterToolCall`）现在捕获异常并继续执行，而不是中断 Agent 循环。链式方法（`beforeLoop`、`beforeCall`）失败时仍然抛出异常
 
 ### 变更
 
-- **破坏性变更：** `MiddlewareInterface::afterLlmCall(array $response, array $usage)` → `afterLlmCall(array $response, LlmCallMeta $meta)`。实现旧签名的中间件必须更新
+- **破坏性变更：** `MiddlewareInterface` 拆分为 `LlmMiddlewareInterface` 和 `AgentMiddlewareInterface`。旧的 `MiddlewareInterface` 已删除
+- **破坏性变更：** `MiddlewarePipeline` 替换为 `LlmMiddlewarePipeline` 和 `AgentMiddlewarePipeline`
+- **破坏性变更：** `Agentic::chat()` 和 `chatStream()` 现在绕过 `AgentRunner`，直接调用 `LlmClient`
 - **破坏性变更：** `Agentic::chat()` 和 `chatStream()` 现在返回 `LlmResponse` 而非 `array`。使用 `$result->content` 或 `$result->toArray()` 实现向后兼容
-- `AuditMiddleware::afterLlmCall` 更新为使用 `LlmCallMeta`
+- **破坏性变更：** `AgentMiddlewareInterface::beforeToolCall()` 和 `afterToolCall()` 新增 `array $runContext = []` 参数，支持无状态上下文传递
+- `AuditMiddleware` 改为无状态 — 通过 `$runContext` 接收会话/代理上下文，不再使用可变实例属性
+- `TurnExecutor` 不再依赖 `AgentMiddlewarePipeline`（移至 `AgentRunner`）
+- `AgentRunContext` 新增 `agentName` 属性用于中间件上下文
 - `AgentRunner` 现在在传递给 `TurnExecutor` 之前将已解析的 `model` 和 `provider` 注入到 options 中
+- `LlmClient::chat()` 和 `chatStream()` 返回 `LlmResponse` DTO，包含来自 API 响应的实际 provider/model
 - `SseWriter::finish()` PHPDoc 改进，明确说明内部调用 `done()`
 
 ## [0.8.3] - 2026-04-17

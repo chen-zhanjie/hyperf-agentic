@@ -5,7 +5,7 @@ namespace ChenZhanjie\Agentic\Tests\Integration;
 
 use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\GuardrailRunner;
-use ChenZhanjie\Agentic\MiddlewarePipeline;
+use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\PromptBuilder;
@@ -27,7 +27,7 @@ class AnthropicStreamTest extends TestCase
             promptBuilder: new PromptBuilder(),
             toolRegistry: new ToolRegistry(),
             guardrailRunner: new GuardrailRunner(),
-            middleware: new MiddlewarePipeline(),
+            agentMiddleware: new AgentMiddlewarePipeline(),
             toolGuardrailRunner: new ToolGuardrailRunner(),
             permissionPolicy: new ConfigToolPermissionPolicy(),
         );

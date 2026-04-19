@@ -21,7 +21,7 @@ class ToolDispatcher
 
     public function __construct(
         private readonly ToolRegistry $toolRegistry,
-        private readonly MiddlewarePipeline $middleware,
+        private readonly AgentMiddlewarePipeline $middleware,
         private readonly Contract\ToolPermissionPolicyInterface $permissionPolicy,
     ) {}
 
@@ -186,10 +186,15 @@ class ToolDispatcher
      */
     private function execute(string $name, array $arguments, AgentRunContext $context, ?callable $onEvent = null): string
     {
+        $runContext = [
+            'session_id' => $context->sessionId,
+            'agent_name' => $context->agentName ?? '',
+        ];
+
         // Step 1: Middleware interception
-        $intercepted = $this->middleware->beforeToolCall($name, $arguments);
+        $intercepted = $this->middleware->beforeToolCall($name, $arguments, $runContext);
         if ($intercepted !== null) {
-            $this->middleware->afterToolCall($name, $arguments, $intercepted);
+            $this->middleware->afterToolCall($name, $arguments, $intercepted, $runContext);
             return $intercepted;
         }
 
@@ -199,17 +204,17 @@ class ToolDispatcher
                 $result = ($context->agentToolHandlers[$name])($arguments);
                 $resultText = is_array($result) ? json_encode($result, JSON_UNESCAPED_UNICODE) : (string) $result;
             } catch (\Throwable $e) {
-                $resultText = "工具执行错误 [{$name}]: " . $e->getMessage();
+                $resultText = "Tool execution error [{$name}]: " . $e->getMessage();
             }
 
             // Tool guardrail — check output
             $outputCheck = $context->toolGuardrails->checkToolOutput($name, $arguments, $resultText);
             if ($outputCheck !== null && $outputCheck->blocked) {
-                $this->middleware->afterToolCall($name, $arguments, ApprovalPrompts::bind(ApprovalPrompts::$outputBlocked, ['tool' => $name, 'reason' => $outputCheck->reason]));
+                $this->middleware->afterToolCall($name, $arguments, ApprovalPrompts::bind(ApprovalPrompts::$outputBlocked, ['tool' => $name, 'reason' => $outputCheck->reason]), $runContext);
                 return ApprovalPrompts::bind(ApprovalPrompts::$outputBlocked, ['tool' => $name, 'reason' => $outputCheck->reason]);
             }
 
-            $this->middleware->afterToolCall($name, $arguments, $resultText);
+            $this->middleware->afterToolCall($name, $arguments, $resultText, $runContext);
             return $resultText;
         }
 
@@ -232,11 +237,11 @@ class ToolDispatcher
         // Tool guardrail — check output
         $outputCheck = $context->toolGuardrails->checkToolOutput($name, $arguments, $resultText);
         if ($outputCheck !== null && $outputCheck->blocked) {
-            $this->middleware->afterToolCall($name, $arguments, ApprovalPrompts::bind(ApprovalPrompts::$outputBlocked, ['tool' => $name, 'reason' => $outputCheck->reason]));
+            $this->middleware->afterToolCall($name, $arguments, ApprovalPrompts::bind(ApprovalPrompts::$outputBlocked, ['tool' => $name, 'reason' => $outputCheck->reason]), $runContext);
             return ApprovalPrompts::bind(ApprovalPrompts::$outputBlocked, ['tool' => $name, 'reason' => $outputCheck->reason]);
         }
 
-        $this->middleware->afterToolCall($name, $arguments, $resultText);
+        $this->middleware->afterToolCall($name, $arguments, $resultText, $runContext);
 
         return $resultText;
     }

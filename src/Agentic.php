@@ -11,15 +11,19 @@ use ChenZhanjie\Agentic\Event\EventEmitter;
 use ChenZhanjie\Agentic\Persona\Persona;
 
 /**
- * Agentic Facade — Layer 4 unified entry point.
+ * Agentic Facade — unified entry point.
  *
  * Config-driven, Hermes-inspired: an Agent is a config, not a class.
+ *
+ * LLM calls (chat/chatStream) bypass AgentRunner and go directly to LlmClient.
+ * Agent calls (run/runStream/runWithConfig/runStreamWithConfig) go through AgentRunner.
  */
 class Agentic
 {
     use EventEmitter;
 
     public function __construct(
+        private readonly LlmClient $llmClient,
         private readonly AgentRunner $runner,
         private readonly ToolRegistry $toolRegistry,
         private readonly PromptBuilder $promptBuilder,
@@ -32,31 +36,23 @@ class Agentic
     }
 
     /**
-     * Pure LLM chat (passthrough, no agent loop).
+     * Pure LLM chat — bypasses AgentRunner entirely.
      */
     public function chat(array $messages, array $options = []): LlmResponse
     {
-        $config = array_merge(
-            $this->defaults,
-            $this->agentDefs['__llm__'] ?? [],
-            ['max_iterations' => 1, 'tools' => []],
-        );
+        $config = array_merge($this->defaults, $this->agentDefs['__llm__'] ?? []);
 
-        $options['model'] = $options['model'] ?? $options['model_override'] ?? $config['model'] ?? null;
-        $options['provider'] = $options['provider'] ?? $config['provider'] ?? null;
+        $llmOptions = [];
+        $provider = $options['provider'] ?? $config['provider'] ?? null;
+        if ($provider !== null) {
+            $llmOptions['provider'] = $provider;
+        }
+        $model = $options['model'] ?? $options['model_override'] ?? $config['model'] ?? null;
+        if ($model !== null) {
+            $llmOptions['model'] = $model;
+        }
 
-        $result = $this->runner->run($messages, $config, $options);
-
-        return new LlmResponse(
-            content: $result->content,
-            usage: [
-                'prompt_tokens' => $result->promptTokens,
-                'completion_tokens' => $result->completionTokens,
-            ],
-            model: $options['model_override'] ?? $config['model'] ?? null,
-            provider: $options['provider'] ?? $config['provider'] ?? null,
-            reasoningContent: $result->reasoningContent,
-        );
+        return $this->llmClient->chat($messages, $llmOptions);
     }
 
     /**
@@ -125,29 +121,23 @@ class Agentic
 
     /**
      * Pure LLM streaming chat — forwards chunks to onChunk callback.
+     * Bypasses AgentRunner entirely.
      */
     public function chatStream(array $messages, callable $onChunk, array $options = []): LlmResponse
     {
-        $config = array_merge(
-            $this->defaults,
-            $this->agentDefs['__llm__'] ?? [],
-        );
+        $config = array_merge($this->defaults, $this->agentDefs['__llm__'] ?? []);
 
-        $llmOptions = [
-            'provider' => $config['provider'] ?? null,
-            'model' => $options['model_override'] ?? $config['model'] ?? null,
-        ];
+        $llmOptions = [];
+        $provider = $options['provider'] ?? $config['provider'] ?? null;
+        if ($provider !== null) {
+            $llmOptions['provider'] = $provider;
+        }
+        $model = $options['model'] ?? $options['model_override'] ?? $config['model'] ?? null;
+        if ($model !== null) {
+            $llmOptions['model'] = $model;
+        }
 
-        $raw = $this->runner->chatStream($messages, $llmOptions, $onChunk);
-
-        return new LlmResponse(
-            content: $raw['content'] ?? '',
-            usage: $raw['usage'] ?? [],
-            model: $llmOptions['model'],
-            provider: $llmOptions['provider'],
-            reasoningContent: $raw['reasoning_content'] ?? null,
-            toolCalls: $raw['tool_calls'] ?? [],
-        );
+        return $this->llmClient->chatStream($messages, $llmOptions, $onChunk);
     }
 
     /**
@@ -201,33 +191,21 @@ class Agentic
 
     // ── Permission Approval API ──
 
-    /**
-     * Approve all tools globally or for a specific session.
-     */
     public function approveAll(?string $sessionId = null): void
     {
         $this->approvalStore?->approveAll($sessionId);
     }
 
-    /**
-     * Approve a specific tool or pattern globally or for a session.
-     */
     public function approveTool(string $toolOrPattern, ?string $sessionId = null): void
     {
         $this->approvalStore?->approve($toolOrPattern, $sessionId);
     }
 
-    /**
-     * Revoke all approvals globally or for a session.
-     */
     public function revokeAll(?string $sessionId = null): void
     {
         $this->approvalStore?->revokeAll($sessionId);
     }
 
-    /**
-     * Revoke a specific approval.
-     */
     public function revokeTool(string $toolOrPattern, ?string $sessionId = null): void
     {
         $this->approvalStore?->revoke($toolOrPattern, $sessionId);
@@ -251,9 +229,6 @@ class Agentic
         return $this->runner->resume($state, $sessionId);
     }
 
-    /**
-     * Resolve messages: load history from MessageStore if conversation_id is provided.
-     */
     private function resolveMessages(array $newMessages, array $options): array
     {
         $conversationId = $options['conversation_id'] ?? null;
@@ -271,9 +246,6 @@ class Agentic
         return array_merge($history, $newMessages);
     }
 
-    /**
-     * Persist new messages to MessageStore after a successful run.
-     */
     private function persistMessages(array $options, array $newMessages, AgentResult $result): void
     {
         $conversationId = $options['conversation_id'] ?? null;
@@ -288,9 +260,6 @@ class Agentic
         $this->messageStore->append($conversationId, $toAppend);
     }
 
-    /**
-     * Get merged agent config: defaults → agent def → runtime overrides.
-     */
     private function getAgentConfig(string $agentName): array
     {
         if (!isset($this->agentDefs[$agentName])) {
@@ -303,9 +272,6 @@ class Agentic
         );
     }
 
-    /**
-     * Resolve Agent DTO or array to a merged config array.
-     */
     private function resolveAgentConfig(Agent|array $agentConfig): array
     {
         return $agentConfig instanceof Agent

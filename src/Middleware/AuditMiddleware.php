@@ -4,17 +4,14 @@ declare(strict_types=1);
 namespace ChenZhanjie\Agentic\Middleware;
 
 use ChenZhanjie\Agentic\AgentResult;
-use ChenZhanjie\Agentic\Contract\MiddlewareInterface;
-use ChenZhanjie\Agentic\LlmCallMeta;
+use ChenZhanjie\Agentic\Contract\AgentMiddlewareInterface;
 
 /**
  * Audit middleware — logs all tool calls with PII redaction.
+ * Stateless: receives run context via method parameters instead of mutable instance state.
  */
-class AuditMiddleware implements MiddlewareInterface
+class AuditMiddleware implements AgentMiddlewareInterface
 {
-    private string $currentSessionId = '';
-    private string $currentAgentName = '';
-
     private readonly ?\Closure $auditLogger;
 
     public function __construct(?callable $auditLogger = null)
@@ -24,8 +21,6 @@ class AuditMiddleware implements MiddlewareInterface
 
     public function beforeLoop(array $messages, array $agentConfig): array
     {
-        $this->currentSessionId = $agentConfig['session_id'] ?? '';
-        $this->currentAgentName = $agentConfig['agent_name'] ?? '';
         return $messages;
     }
 
@@ -34,32 +29,25 @@ class AuditMiddleware implements MiddlewareInterface
         return $result;
     }
 
-    public function beforeLlmCall(array $messages, array $options): array
-    {
-        return $options;
-    }
-
-    public function afterLlmCall(array $response, LlmCallMeta $meta): void {}
-
-    public function beforeToolCall(string $name, array $arguments): ?string
+    public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string
     {
         $this->log('tool.call', [
             'tool' => $name,
-            'agent' => $this->currentAgentName,
+            'agent' => $runContext['agent_name'] ?? '',
             'arguments' => $this->redactSensitive($arguments),
-            'session_id' => $this->currentSessionId,
+            'session_id' => $runContext['session_id'] ?? '',
         ]);
         return null;
     }
 
-    public function afterToolCall(string $name, array $arguments, string $result): void
+    public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void
     {
         $this->log('tool.result', [
             'tool' => $name,
-            'agent' => $this->currentAgentName,
-            'success' => !str_starts_with($result, '工具执行错误'),
+            'agent' => $runContext['agent_name'] ?? '',
+            'success' => !str_starts_with($result, 'Tool execution error'),
             'result_len' => mb_strlen($result),
-            'session_id' => $this->currentSessionId,
+            'session_id' => $runContext['session_id'] ?? '',
         ]);
     }
 

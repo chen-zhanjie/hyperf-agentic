@@ -13,7 +13,7 @@ use ChenZhanjie\Agentic\Contract\ToolInterface;
 use ChenZhanjie\Agentic\GuardrailResult;
 use ChenZhanjie\Agentic\GuardrailRunner;
 use ChenZhanjie\Agentic\LlmClient;
-use ChenZhanjie\Agentic\MiddlewarePipeline;
+use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\PromptBuilder;
@@ -29,9 +29,10 @@ class AgenticTest extends TestCase
     public function testRunDelegatesToAgentRunner(): void
     {
         $llm = $this->createMockLlm([['content' => 'Hello!', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: new PromptBuilder(),
@@ -52,9 +53,10 @@ class AgenticTest extends TestCase
     public function testRunPassesAgentConfig(): void
     {
         $llm = $this->createMockLlm([['content' => 'response', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: new PromptBuilder(),
@@ -75,9 +77,10 @@ class AgenticTest extends TestCase
     public function testRunThrowsForUndefinedAgent(): void
     {
         $llm = $this->createMockLlm([]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: new PromptBuilder(),
@@ -94,9 +97,10 @@ class AgenticTest extends TestCase
     public function testChatReturnsLlmResponse(): void
     {
         $llm = $this->createMockLlm([['content' => 'plain text response', 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: new PromptBuilder(),
@@ -107,6 +111,134 @@ class AgenticTest extends TestCase
         $this->assertSame('plain text response', $result->content);
         $this->assertSame(10, $result->usage['prompt_tokens']);
         $this->assertSame(5, $result->usage['completion_tokens']);
+    }
+
+    public function testChatBypassesAgentRunnerDirectly(): void
+    {
+        // Use a mock runner that would fail if run() were called
+        $runner = $this->createMock(AgentRunner::class);
+        $runner->expects($this->never())->method('run');
+
+        $llm = $this->createMockLlm([['content' => 'direct llm', 'usage' => []]]);
+
+        $agentic = new Agentic(
+            llmClient: $llm,
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+        );
+
+        $result = $agentic->chat([['role' => 'user', 'content' => 'hi']]);
+        $this->assertSame('direct llm', $result->content);
+    }
+
+    public function testChatPassesProviderAndModelOptions(): void
+    {
+        $captured = null;
+        $llm = new LlmClient(
+            providerConfigs: ['openai' => ['model' => 'gpt-4o'], 'anthropic' => ['model' => 'claude-sonnet']],
+            defaultProvider: 'openai',
+            adapterFactory: function (string $op, string $provider, array $config, array $messages, array $options) use (&$captured) {
+                $captured = $options;
+                return ['content' => 'ok', 'usage' => [], 'model' => $options['model'] ?? 'test'];
+            },
+        );
+
+        $runner = $this->createMock(AgentRunner::class);
+        $agentic = new Agentic(
+            llmClient: $llm,
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+        );
+
+        $agentic->chat([['role' => 'user', 'content' => 'hi']], ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-20250514']);
+        $this->assertSame('anthropic', $captured['provider']);
+        $this->assertSame('claude-sonnet-4-20250514', $captured['model']);
+    }
+
+    public function testChatDoesNotSetNullProviderOrModel(): void
+    {
+        // Verify Agentic doesn't pass null for provider/model — LlmClient adds defaults internally
+        $captured = null;
+        $llm = new LlmClient(
+            providerConfigs: ['openai' => ['model' => 'gpt-4o']],
+            defaultProvider: 'openai',
+            adapterFactory: function (string $op, string $provider, array $config, array $messages, array $options) use (&$captured) {
+                $captured = $options;
+                return ['content' => 'ok', 'usage' => [], 'model' => 'gpt-4o'];
+            },
+        );
+
+        $runner = $this->createMock(AgentRunner::class);
+        $agentic = new Agentic(
+            llmClient: $llm,
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+        );
+
+        $agentic->chat([['role' => 'user', 'content' => 'hi']]);
+        // Agentic should not pass null provider — LlmClient falls back to defaultProvider
+        $this->assertArrayNotHasKey('provider', $captured);
+        // Agentic should not pass null model — LlmClient falls back to config model
+        // (LlmClient::doChat adds model internally, so we check Agentic didn't set null)
+        $this->assertFalse(isset($captured['model']) && $captured['model'] === null);
+    }
+
+    // ── approveAll / revokeAll ──
+
+    public function testApproveAllDelegatesToStore(): void
+    {
+        $store = $this->createMock(\ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface::class);
+        $store->expects($this->once())->method('approveAll')->with('session-1');
+
+        $agentic = $this->createAgenticWithApprovalStore($store);
+        $agentic->approveAll('session-1');
+    }
+
+    public function testApproveToolDelegatesToStore(): void
+    {
+        $store = $this->createMock(\ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface::class);
+        $store->expects($this->once())->method('approve')->with('search', 'session-1');
+
+        $agentic = $this->createAgenticWithApprovalStore($store);
+        $agentic->approveTool('search', 'session-1');
+    }
+
+    public function testRevokeAllDelegatesToStore(): void
+    {
+        $store = $this->createMock(\ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface::class);
+        $store->expects($this->once())->method('revokeAll')->with('session-1');
+
+        $agentic = $this->createAgenticWithApprovalStore($store);
+        $agentic->revokeAll('session-1');
+    }
+
+    public function testRevokeToolDelegatesToStore(): void
+    {
+        $store = $this->createMock(\ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface::class);
+        $store->expects($this->once())->method('revoke')->with('search', 'session-1');
+
+        $agentic = $this->createAgenticWithApprovalStore($store);
+        $agentic->revokeTool('search', 'session-1');
+    }
+
+    public function testSetHumanInputResolverDelegatesToRunner(): void
+    {
+        $resolver = $this->createMock(\ChenZhanjie\Agentic\Contract\HumanInputResolverInterface::class);
+        $runner = $this->createMock(AgentRunner::class);
+        $runner->expects($this->once())->method('setHumanInputResolver')->with($resolver);
+
+        $llm = $this->createMockLlm([]);
+        $agentic = new Agentic(
+            llmClient: $llm,
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+        );
+
+        $agentic->setHumanInputResolver($resolver);
     }
 
     // ── agents list ──
@@ -200,9 +332,10 @@ class AgenticTest extends TestCase
     public function testRunWithConfigBypassesAgentNameLookup(): void
     {
         $llm = $this->createMockLlm([['content' => 'Dynamic response', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: new PromptBuilder(),
@@ -221,9 +354,10 @@ class AgenticTest extends TestCase
     public function testRunWithConfigMergesDefaults(): void
     {
         $llm = $this->createMockLlm([['content' => 'ok', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: new PromptBuilder(),
@@ -241,9 +375,10 @@ class AgenticTest extends TestCase
     public function testRunStreamWithConfigWorks(): void
     {
         $llm = $this->createMockLlm([['content' => 'streamed', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $agentic = new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: new PromptBuilder(),
@@ -278,12 +413,13 @@ class AgenticTest extends TestCase
             adapterFactory: function (string $type, string $provider, array $config, array $messages, array $options) use (&$callCount, &$capturedMessages) {
                 ++$callCount;
                 $capturedMessages = $messages;
-                return ['content' => 'New answer', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]];
+                return ['content' => 'New answer', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10], 'model' => 'test'];
             },
         );
 
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
         $agentic = new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: new PromptBuilder(),
@@ -316,10 +452,11 @@ class AgenticTest extends TestCase
     public function testRunWithConfigWithoutConversationIdIsStateless(): void
     {
         $llm = $this->createMockLlm([['content' => 'Response', 'usage' => ['prompt_tokens' => 50, 'completion_tokens' => 10]]]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $messageStore = new MemoryMessageStore();
         $agentic = new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: new PromptBuilder(),
@@ -352,10 +489,11 @@ class AgenticTest extends TestCase
         });
 
         $llm = $this->createMockLlm(['should not be called']);
-        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), $guardrailRunner, new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), new ToolRegistry(), $guardrailRunner, new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $messageStore = new MemoryMessageStore();
         $agentic = new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: new PromptBuilder(),
@@ -381,9 +519,10 @@ class AgenticTest extends TestCase
     ): Agentic {
         $registry = $toolRegistry ?? new ToolRegistry();
         $llm = $this->createMockLlm([]);
-        $runner = new AgentRunner($llm, new PromptBuilder(), $registry, new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, new PromptBuilder(), $registry, new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         return new Agentic(
+            llmClient: $llm,
             runner: $runner,
             toolRegistry: $registry,
             promptBuilder: new PromptBuilder(),
@@ -398,7 +537,7 @@ class AgenticTest extends TestCase
             providerConfigs: ['test' => ['model' => 'test']],
             defaultProvider: 'test',
             adapterFactory: function () use ($responses, &$index): array {
-                return $responses[$index++] ?? ['content' => '', 'usage' => []];
+                return $responses[$index++] ?? ['content' => '', 'usage' => [], 'model' => 'test'];
             },
         );
     }
@@ -417,5 +556,18 @@ class AgenticTest extends TestCase
             public function isEnabled(): bool { return $this->toolEnabled; }
             public function isParallelAllowed(): bool { return true; }
         };
+    }
+
+    private function createAgenticWithApprovalStore(\ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface $store): Agentic
+    {
+        $llm = $this->createMockLlm([]);
+        $runner = $this->createMock(AgentRunner::class);
+        return new Agentic(
+            llmClient: $llm,
+            runner: $runner,
+            toolRegistry: new ToolRegistry(),
+            promptBuilder: new PromptBuilder(),
+            approvalStore: $store,
+        );
     }
 }

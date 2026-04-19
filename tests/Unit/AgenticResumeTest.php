@@ -8,6 +8,7 @@ use ChenZhanjie\Agentic\Agentic;
 use ChenZhanjie\Agentic\AgentResult;
 use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\Contract\SessionStoreInterface;
+use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\ToolRegistry;
 use ChenZhanjie\Agentic\PromptBuilder;
 
@@ -22,7 +23,10 @@ class AgenticResumeTest extends TestCase
         $this->runner = $this->createMock(AgentRunner::class);
         $this->sessionStore = $this->createMock(SessionStoreInterface::class);
 
+        $llm = $this->createMock(LlmClient::class);
+
         $this->agentic = new Agentic(
+            llmClient: $llm,
             runner: $this->runner,
             toolRegistry: new ToolRegistry(),
             promptBuilder: $this->createMock(PromptBuilder::class),

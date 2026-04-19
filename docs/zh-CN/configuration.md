@@ -134,3 +134,47 @@ return [
     'default_agent' => 'general',
 ];
 ```
+
+## 中间件管道
+
+SDK 使用两个独立的中间件管道，在 `ConfigProvider` 中注册：
+
+### LlmMiddlewarePipeline
+
+LLM 层级钩子，用于可观测性、日志记录和请求修改。通过 DI 或运行时添加中间件：
+
+```php
+use ChenZhanjie\Agentic\LlmMiddlewarePipeline;
+use ChenZhanjie\Agentic\Contract\LlmMiddlewareInterface;
+
+class LoggingLlmMiddleware implements LlmMiddlewareInterface
+{
+    public function beforeCall(\ChenZhanjie\Agentic\LlmCallRequest $request): \ChenZhanjie\Agentic\LlmCallRequest
+    {
+        return $request; // 或修改 messages/options
+    }
+    public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, \ChenZhanjie\Agentic\LlmResponse $response): void
+    {
+        // 记录响应指标
+    }
+    public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
+    public function onFailover(string $fromProvider, string $toProvider): void {}
+}
+```
+
+### AgentMiddlewarePipeline
+
+Agent 层级钩子，用于工具循环（循环前后、工具调用前后）：
+
+```php
+use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
+use ChenZhanjie\Agentic\Contract\AgentMiddlewareInterface;
+
+class AuditAgentMiddleware implements AgentMiddlewareInterface
+{
+    public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
+    public function afterLoop(\ChenZhanjie\Agentic\AgentResult $result): \ChenZhanjie\Agentic\AgentResult { return $result; }
+    public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string { return null; }
+    public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void {}
+}
+```

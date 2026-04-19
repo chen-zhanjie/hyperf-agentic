@@ -134,3 +134,47 @@ return [
     'default_agent' => 'general',
 ];
 ```
+
+## Middleware Pipelines
+
+The SDK uses two separate middleware pipelines, registered in `ConfigProvider`:
+
+### LlmMiddlewarePipeline
+
+LLM-level hooks for observability, logging, and request modification. Add middleware via DI or at runtime:
+
+```php
+use ChenZhanjie\Agentic\LlmMiddlewarePipeline;
+use ChenZhanjie\Agentic\Contract\LlmMiddlewareInterface;
+
+class LoggingLlmMiddleware implements LlmMiddlewareInterface
+{
+    public function beforeCall(\ChenZhanjie\Agentic\LlmCallRequest $request): \ChenZhanjie\Agentic\LlmCallRequest
+    {
+        return $request; // or modify messages/options
+    }
+    public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, \ChenZhanjie\Agentic\LlmResponse $response): void
+    {
+        // Log response metrics
+    }
+    public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
+    public function onFailover(string $fromProvider, string $toProvider): void {}
+}
+```
+
+### AgentMiddlewarePipeline
+
+Agent-level hooks for the tool loop (before/after loop, before/after tool calls):
+
+```php
+use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
+use ChenZhanjie\Agentic\Contract\AgentMiddlewareInterface;
+
+class AuditAgentMiddleware implements AgentMiddlewareInterface
+{
+    public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
+    public function afterLoop(\ChenZhanjie\Agentic\AgentResult $result): \ChenZhanjie\Agentic\AgentResult { return $result; }
+    public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string { return null; }
+    public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void {}
+}
+```

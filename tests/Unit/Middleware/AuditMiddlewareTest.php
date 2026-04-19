@@ -84,7 +84,7 @@ class AuditMiddlewareTest extends TestCase
 
         $middleware->beforeLoop([], []);
         $middleware->beforeToolCall('test', []);
-        $middleware->afterToolCall('test', [], '工具执行错误 [test]: something broke');
+        $middleware->afterToolCall('test', [], 'Tool execution error [test]: something broke');
 
         $this->assertFalse($log[1]['ctx']['success']);
     }

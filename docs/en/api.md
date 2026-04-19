@@ -431,7 +431,7 @@ $response->toArray(); // Convert to associative array (backward compat)
 
 ## LlmCallMeta
 
-Passed to `MiddlewareInterface::afterLlmCall()` for observability.
+Passed to `LlmMiddlewareInterface::afterCall()` for observability.
 
 ```php
 public function afterLlmCall(array $response, LlmCallMeta $meta): void

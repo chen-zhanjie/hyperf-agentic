@@ -23,10 +23,18 @@ class LlmClientFactory
             // Logger not registered; LlmClient falls back to NullLogger
         }
 
+        $middleware = null;
+        try {
+            $middleware = $container->get(LlmMiddlewarePipeline::class);
+        } catch (\Throwable) {
+            // No LLM middleware registered; LlmClient runs without hooks
+        }
+
         return new LlmClient(
             providerConfigs: $providerConfigs,
             defaultProvider: $defaultProvider,
             logger: $logger,
+            middleware: $middleware,
         );
     }
 }

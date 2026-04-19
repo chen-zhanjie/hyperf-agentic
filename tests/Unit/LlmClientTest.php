@@ -5,6 +5,8 @@ namespace ChenZhanjie\Agentic\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
 use ChenZhanjie\Agentic\LlmClient;
+use ChenZhanjie\Agentic\LlmMiddlewarePipeline;
+use ChenZhanjie\Agentic\LlmResponse;
 
 class LlmClientTest extends TestCase
 {
@@ -13,12 +15,14 @@ class LlmClientTest extends TestCase
         string $default = 'openai',
         array $retry = [],
         ?callable $adapter = null,
+        ?LlmMiddlewarePipeline $middleware = null,
     ): LlmClient {
         return new LlmClient(
             providerConfigs: $providers,
             defaultProvider: $default,
             retryConfig: $retry,
             adapterFactory: $adapter,
+            middleware: $middleware,
         );
     }
 
@@ -59,7 +63,8 @@ class LlmClientTest extends TestCase
         );
 
         $result = $client->chat([['role' => 'user', 'content' => 'hi']]);
-        $this->assertSame(['content' => 'Hello!', 'usage' => []], $result);
+        $this->assertInstanceOf(LlmResponse::class, $result);
+        $this->assertSame('Hello!', $result->content);
     }
 
     public function testChatPassesCorrectProvider(): void
@@ -92,7 +97,6 @@ class LlmClientTest extends TestCase
 
     public function testChatFailoversWhenProviderUnknown(): void
     {
-        // When requesting unknown provider, it should failover to 'openai' which is configured
         $calledProvider = null;
         $client = $this->makeClient(
             providers: ['openai' => ['model' => 'gpt-4o']],
@@ -104,8 +108,7 @@ class LlmClientTest extends TestCase
         );
 
         $result = $client->chat([['role' => 'user', 'content' => 'hi']], ['provider' => 'unknown']);
-        $this->assertSame(['content' => 'failover response', 'usage' => []], $result);
-        // Should have failover'd to 'openai'
+        $this->assertSame('failover response', $result->content);
         $this->assertSame('openai', $calledProvider);
     }
 
@@ -127,7 +130,7 @@ class LlmClientTest extends TestCase
         );
 
         $result = $client->chat([['role' => 'user', 'content' => 'hi']]);
-        $this->assertSame(['content' => 'success on attempt 3', 'usage' => []], $result);
+        $this->assertSame('success on attempt 3', $result->content);
         $this->assertSame(3, $attempts);
     }
 
@@ -165,7 +168,8 @@ class LlmClientTest extends TestCase
         );
 
         $result = $client->chat([['role' => 'user', 'content' => 'hi']]);
-        $this->assertSame(['content' => 'fallback response', 'usage' => []], $result);
+        $this->assertSame('fallback response', $result->content);
+        $this->assertSame('fallback', $result->provider);
         $this->assertContains('primary', $calledProviders);
         $this->assertContains('fallback', $calledProviders);
     }
@@ -211,5 +215,168 @@ class LlmClientTest extends TestCase
         $this->assertSame(5, $config['max_attempts']);
         $this->assertSame(1000, $config['base_delay_ms']);
         $this->assertSame(30000, $config['max_delay_ms']);
+    }
+
+    // --- LlmMiddlewarePipeline integration ---
+
+    public function testChatInvokesMiddlewareBeforeCallAndAfterCall(): void
+    {
+        $calls = [];
+        $middleware = new class($calls) implements \ChenZhanjie\Agentic\Contract\LlmMiddlewareInterface {
+            public function __construct(public array &$calls) {}
+            public function beforeCall(\ChenZhanjie\Agentic\LlmCallRequest $request): \ChenZhanjie\Agentic\LlmCallRequest
+            {
+                $this->calls[] = 'beforeCall';
+                return $request;
+            }
+            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): void
+            {
+                $this->calls[] = 'afterCall';
+            }
+            public function onRetry(string $provider, int $attempt, \Throwable $error): void
+            {
+                $this->calls[] = "onRetry:{$provider}:{$attempt}";
+            }
+            public function onFailover(string $fromProvider, string $toProvider): void
+            {
+                $this->calls[] = "onFailover:{$fromProvider}→{$toProvider}";
+            }
+        };
+
+        $pipeline = new LlmMiddlewarePipeline();
+        $pipeline->add($middleware);
+
+        $client = $this->makeClient(
+            providers: ['openai' => ['model' => 'gpt-4o']],
+            adapter: fn() => ['content' => 'ok', 'usage' => []],
+            middleware: $pipeline,
+        );
+
+        $result = $client->chat([['role' => 'user', 'content' => 'hi']]);
+
+        $this->assertSame('ok', $result->content);
+        $this->assertContains('beforeCall', $middleware->calls);
+        $this->assertContains('afterCall', $middleware->calls);
+        $this->assertStringNotContainsString('onRetry', implode(',', $middleware->calls));
+    }
+
+    public function testChatInvokesOnRetryOnFailure(): void
+    {
+        $calls = [];
+        $middleware = new class($calls) implements \ChenZhanjie\Agentic\Contract\LlmMiddlewareInterface {
+            public function __construct(public array &$calls) {}
+            public function beforeCall(\ChenZhanjie\Agentic\LlmCallRequest $request): \ChenZhanjie\Agentic\LlmCallRequest
+            {
+                $this->calls[] = 'beforeCall';
+                return $request;
+            }
+            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): void
+            {
+                $this->calls[] = 'afterCall';
+            }
+            public function onRetry(string $provider, int $attempt, \Throwable $error): void
+            {
+                $this->calls[] = "onRetry:{$attempt}";
+            }
+            public function onFailover(string $fromProvider, string $toProvider): void {}
+        };
+
+        $pipeline = new LlmMiddlewarePipeline();
+        $pipeline->add($middleware);
+
+        $attempts = 0;
+        $client = $this->makeClient(
+            providers: ['openai' => ['model' => 'gpt-4o']],
+            retry: ['max_attempts' => 2, 'base_delay_ms' => 1, 'max_delay_ms' => 1],
+            adapter: function () use (&$attempts) {
+                ++$attempts;
+                if ($attempts < 2) {
+                    throw new \RuntimeException('temporary failure');
+                }
+                return ['content' => 'recovered', 'usage' => []];
+            },
+            middleware: $pipeline,
+        );
+
+        $result = $client->chat([['role' => 'user', 'content' => 'hi']]);
+        $this->assertSame('recovered', $result->content);
+        $this->assertContains('onRetry:1', $middleware->calls);
+    }
+
+    public function testChatInvokesOnFailoverWhenProviderFails(): void
+    {
+        $calls = [];
+        $middleware = new class($calls) implements \ChenZhanjie\Agentic\Contract\LlmMiddlewareInterface {
+            public function __construct(public array &$calls) {}
+            public function beforeCall(\ChenZhanjie\Agentic\LlmCallRequest $request): \ChenZhanjie\Agentic\LlmCallRequest
+            {
+                $this->calls[] = 'beforeCall';
+                return $request;
+            }
+            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): void
+            {
+                $this->calls[] = 'afterCall';
+            }
+            public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
+            public function onFailover(string $fromProvider, string $toProvider): void
+            {
+                $this->calls[] = "onFailover:{$fromProvider}→{$toProvider}";
+            }
+        };
+
+        $pipeline = new LlmMiddlewarePipeline();
+        $pipeline->add($middleware);
+
+        $client = $this->makeClient(
+            providers: [
+                'primary' => ['model' => 'gpt-4o'],
+                'fallback' => ['model' => 'fallback-model'],
+            ],
+            retry: ['max_attempts' => 1, 'base_delay_ms' => 1, 'max_delay_ms' => 1],
+            adapter: function (string $op, string $provider) {
+                if ($provider === 'primary') {
+                    throw new \RuntimeException('primary down');
+                }
+                return ['content' => 'fallback response', 'usage' => []];
+            },
+            middleware: $pipeline,
+        );
+
+        $result = $client->chat([['role' => 'user', 'content' => 'hi']]);
+        $this->assertSame('fallback response', $result->content);
+        $this->assertContains('onFailover:primary→fallback', $middleware->calls);
+    }
+
+    public function testMiddlewareBeforeCallCanModifyMessages(): void
+    {
+        $captured = null;
+        $middleware = new class implements \ChenZhanjie\Agentic\Contract\LlmMiddlewareInterface {
+            public function beforeCall(\ChenZhanjie\Agentic\LlmCallRequest $request): \ChenZhanjie\Agentic\LlmCallRequest
+            {
+                return $request->with([
+                    'messages' => array_merge($request->messages, [['role' => 'system', 'content' => 'injected']]),
+                ]);
+            }
+            public function afterCall(\ChenZhanjie\Agentic\LlmCallRequest $request, LlmResponse $response): void {}
+            public function onRetry(string $provider, int $attempt, \Throwable $error): void {}
+            public function onFailover(string $fromProvider, string $toProvider): void {}
+        };
+
+        $pipeline = new LlmMiddlewarePipeline();
+        $pipeline->add($middleware);
+
+        $client = $this->makeClient(
+            providers: ['openai' => ['model' => 'gpt-4o']],
+            adapter: function (string $op, string $p, array $c, array $messages) use (&$captured) {
+                $captured = $messages;
+                return ['content' => 'ok', 'usage' => []];
+            },
+            middleware: $pipeline,
+        );
+
+        $client->chat([['role' => 'user', 'content' => 'hi']]);
+
+        $this->assertCount(2, $captured);
+        $this->assertSame('injected', $captured[1]['content']);
     }
 }

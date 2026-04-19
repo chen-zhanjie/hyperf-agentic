@@ -66,7 +66,7 @@ $runner = new \ChenZhanjie\Agentic\AgentRunner(
     promptBuilder: new \ChenZhanjie\Agentic\PromptBuilder(),
     toolRegistry: $toolRegistry,
     guardrailRunner: new \ChenZhanjie\Agentic\GuardrailRunner(),
-    middleware: new \ChenZhanjie\Agentic\MiddlewarePipeline(),
+    agentMiddleware: new \ChenZhanjie\Agentic\AgentMiddlewarePipeline(),
     toolGuardrailRunner: new \ChenZhanjie\Agentic\ToolGuardrailRunner(),
     permissionPolicy: new \ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy(),
 );
@@ -110,7 +110,7 @@ while (true) {
             promptBuilder: new \ChenZhanjie\Agentic\PromptBuilder(),
             toolRegistry: $toolRegistry,
             guardrailRunner: new \ChenZhanjie\Agentic\GuardrailRunner(),
-            middleware: new \ChenZhanjie\Agentic\MiddlewarePipeline(),
+            agentMiddleware: new \ChenZhanjie\Agentic\AgentMiddlewarePipeline(),
             toolGuardrailRunner: new \ChenZhanjie\Agentic\ToolGuardrailRunner(),
             permissionPolicy: new \ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy(),
         );
@@ -239,11 +239,8 @@ function buildToolRegistry(): \ChenZhanjie\Agentic\ToolRegistry
         }
         public function execute(array $arguments): string {
             $expr = $arguments['expression'] ?? '';
-            if (!preg_match('/^[\d\s\+\-\*\/\(\)\.\,sqrtpiew]+$/', $expr)) {
-                return 'Error: only safe math characters allowed';
-            }
             try {
-                $result = eval("return {$expr};");
+                $result = safeMathEval($expr);
                 return "{$expr} = {$result}";
             } catch (\Throwable) {
                 return 'Error: could not evaluate expression';
@@ -338,4 +335,137 @@ function parseArgs(array $argv): array
         }
     }
     return $args;
+}
+
+/**
+ * Safe math expression evaluator — no eval().
+ * Supports: +, -, *, /, parentheses, sqrt(), pi(), pow().
+ */
+function safeMathEval(string $expr): float|int
+{
+    $expr = trim($expr);
+    if ($expr === '') {
+        throw new \InvalidArgumentException('Empty expression');
+    }
+
+    // Only allow digits, operators, parentheses, dots, spaces, commas, and known function names
+    $normalized = str_ireplace(['sqrt', 'pi', 'pow'], ['SQRT', 'PI', 'POW'], $expr);
+    if (!preg_match('/^[\d\s\+\-\*\/\(\)\.\,SQRTPIOW]+$/', $normalized)) {
+        throw new \InvalidArgumentException('Unsafe characters in expression');
+    }
+
+    // Replace named functions with PHP math equivalents
+    $expr = preg_replace_callback('/sqrt\(([^)]+)\)/i', function (array $m): string {
+        return (string) sqrt(safeMathEval($m[1]));
+    }, $expr);
+    $expr = preg_replace_callback('/pow\(([^,]+),\s*([^)]+)\)/i', function (array $m): string {
+        return (string) pow(safeMathEval($m[1]), safeMathEval($m[2]));
+    }, $expr);
+    $expr = str_ireplace('pi()', (string) M_PI, $expr);
+
+    // Now evaluate the remaining arithmetic expression
+    // Only digits, operators, parens, dots, spaces remain
+    $clean = preg_replace('/\s+/', '', $expr);
+    if (!preg_match('/^[\d\+\-\*\/\(\)\.]+$/', $clean)) {
+        throw new \InvalidArgumentException('Invalid expression');
+    }
+
+    // Stack-based arithmetic parser
+    return arithmeticEval($clean);
+}
+
+function arithmeticEval(string $expr): float|int
+{
+    $tokens = tokenize($expr);
+    $pos = 0;
+    $result = parseAddSub($tokens, $pos);
+
+    if ($pos < count($tokens)) {
+        throw new \InvalidArgumentException('Unexpected token at position ' . $pos);
+    }
+
+    return $result;
+}
+
+function tokenize(string $expr): array
+{
+    $tokens = [];
+    $i = 0;
+    $len = strlen($expr);
+    while ($i < $len) {
+        $ch = $expr[$i];
+        if (ctype_digit($ch) || $ch === '.') {
+            $num = '';
+            while ($i < $len && (ctype_digit($expr[$i]) || $expr[$i] === '.')) {
+                $num .= $expr[$i++];
+            }
+            $tokens[] = ['type' => 'num', 'value' => (float) $num];
+        } elseif (in_array($ch, ['+', '-', '*', '/'])) {
+            // Treat leading minus as unary
+            if ($ch === '-' && (empty($tokens) || end($tokens)['type'] !== 'num' && end($tokens)['value'] !== ')')) {
+                $num = '-';
+                $i++;
+                while ($i < $len && (ctype_digit($expr[$i]) || $expr[$i] === '.')) {
+                    $num .= $expr[$i++];
+                }
+                $tokens[] = ['type' => 'num', 'value' => (float) $num];
+            } else {
+                $tokens[] = ['type' => 'op', 'value' => $ch];
+                $i++;
+            }
+        } elseif ($ch === '(') {
+            $tokens[] = ['type' => 'lparen'];
+            $i++;
+        } elseif ($ch === ')') {
+            $tokens[] = ['type' => 'rparen'];
+            $i++;
+        } else {
+            $i++;
+        }
+    }
+    return $tokens;
+}
+
+function parseAddSub(array $tokens, int &$pos): float|int
+{
+    $left = parseMulDiv($tokens, $pos);
+    while ($pos < count($tokens) && $tokens[$pos]['type'] === 'op' && in_array($tokens[$pos]['value'], ['+', '-'])) {
+        $op = $tokens[$pos++]['value'];
+        $right = parseMulDiv($tokens, $pos);
+        $left = $op === '+' ? $left + $right : $left - $right;
+    }
+    return $left;
+}
+
+function parseMulDiv(array $tokens, int &$pos): float|int
+{
+    $left = parsePrimary($tokens, $pos);
+    while ($pos < count($tokens) && $tokens[$pos]['type'] === 'op' && in_array($tokens[$pos]['value'], ['*', '/'])) {
+        $op = $tokens[$pos++]['value'];
+        $right = parsePrimary($tokens, $pos);
+        $left = $op === '*' ? $left * $right : $left / $right;
+    }
+    return $left;
+}
+
+function parsePrimary(array $tokens, int &$pos): float|int
+{
+    if ($pos >= count($tokens)) {
+        throw new \InvalidArgumentException('Unexpected end of expression');
+    }
+
+    if ($tokens[$pos]['type'] === 'lparen') {
+        $pos++; // skip (
+        $result = parseAddSub($tokens, $pos);
+        if ($pos < count($tokens) && $tokens[$pos]['type'] === 'rparen') {
+            $pos++; // skip )
+        }
+        return $result;
+    }
+
+    if ($tokens[$pos]['type'] === 'num') {
+        return $tokens[$pos++]['value'];
+    }
+
+    throw new \InvalidArgumentException('Unexpected token');
 }

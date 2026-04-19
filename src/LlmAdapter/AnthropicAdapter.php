@@ -75,6 +75,8 @@ class AnthropicAdapter implements LlmAdapterInterface
             CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE),
             CURLOPT_TIMEOUT => $this->timeout,
             CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_WRITEFUNCTION => function ($_, string $data) use ($onChunk, &$sseBuffer, &$streamState): int {
                 $this->processSseChunk($data, $onChunk, $sseBuffer, $streamState);
                 return strlen($data);
@@ -244,6 +246,8 @@ class AnthropicAdapter implements LlmAdapterInterface
             $result['tool_calls'] = $toolCalls;
         }
 
+        $result['model'] = $data['model'] ?? '';
+
         return $result;
     }
 
@@ -261,6 +265,8 @@ class AnthropicAdapter implements LlmAdapterInterface
             CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE),
             CURLOPT_TIMEOUT => $this->timeout,
             CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
         ]);
 
         $response = curl_exec($ch);
@@ -273,7 +279,8 @@ class AnthropicAdapter implements LlmAdapterInterface
         }
 
         if ($httpCode !== 200) {
-            throw new \RuntimeException("Anthropic API error (HTTP {$httpCode}): {$response}");
+            $safeBody = mb_substr($response, 0, 200);
+            throw new \RuntimeException("Anthropic API error (HTTP {$httpCode}): {$safeBody}");
         }
 
         $data = json_decode($response, true);

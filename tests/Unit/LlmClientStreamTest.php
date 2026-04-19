@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 namespace ChenZhanjie\Agentic\Tests\Unit;
 
-use ChenZhanjie\Agentic\LlmAdapter\AnthropicAdapter;
-use ChenZhanjie\Agentic\LlmAdapter\OpenAiAdapter;
 use ChenZhanjie\Agentic\LlmClient;
 use PHPUnit\Framework\TestCase;
 
@@ -29,10 +27,6 @@ class LlmClientStreamTest extends TestCase
             $called = true;
         };
 
-        // Since we can't easily mock the HTTP layer without refactoring,
-        // we verify the method accepts the call and returns an array shape.
-        // In a real environment this would hit the wire; here we rely on
-        // the adapter throwing because the endpoint is unreachable.
         try {
             $client->chatStream([['role' => 'user', 'content' => 'hi']], [], $onChunk);
         } catch (\RuntimeException $e) {
@@ -87,7 +81,7 @@ class LlmClientStreamTest extends TestCase
 
         $this->assertSame('chatStream', $captured['method']);
         $this->assertSame('custom', $captured['provider']);
-        $this->assertSame('factory result', $result['content']);
+        $this->assertSame('factory result', $result->content);
     }
 
     public function testChatStreamFailsOverToNextProvider(): void
@@ -114,6 +108,6 @@ class LlmClientStreamTest extends TestCase
         $result = $client->chatStream([['role' => 'user', 'content' => 'hi']], [], function (array $chunk) {});
 
         $this->assertSame(['primary', 'fallback'], $callLog);
-        $this->assertSame('fallback result', $result['content']);
+        $this->assertSame('fallback result', $result->content);
     }
 }

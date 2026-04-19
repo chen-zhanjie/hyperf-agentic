@@ -8,7 +8,7 @@ use ChenZhanjie\Agentic\ApprovalChoice;
 use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
 use ChenZhanjie\Agentic\Contract\ToolPermissionPolicyInterface;
 use ChenZhanjie\Agentic\GuardrailRunner;
-use ChenZhanjie\Agentic\MiddlewarePipeline;
+use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\PermissionApprovalStore;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\PromptBuilder;
@@ -437,7 +437,7 @@ class PermissionRunnerTest extends TestCase
             promptBuilder: new PromptBuilder(),
             toolRegistry: new ToolRegistry(),
             guardrailRunner: new GuardrailRunner(),
-            middleware: new MiddlewarePipeline(),
+            agentMiddleware: new AgentMiddlewarePipeline(),
             toolGuardrailRunner: new ToolGuardrailRunner(),
             permissionPolicy: $denyAllPolicy,
         );

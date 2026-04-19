@@ -1,6 +1,6 @@
 # Architecture
 
-The SDK uses a 5-layer architecture, building from low-level interfaces to high-level entry points.
+The SDK uses a 5-layer architecture, building from low-level interfaces to high-level entry points. Layer 3 is split into two sub-layers (LLM and Agent) following the v0.10 refactor.
 
 ## Layer Structure
 
@@ -9,18 +9,24 @@ Layer 1: Contract (Interface Layer)
     │   ToolInterface, GuardrailInterface, SkillInterface,
     │   MessageStoreInterface, SessionStoreInterface,
     │   ToolGuardrailInterface, ToolPermissionPolicyInterface,
-    │   GuardrailAuditLoggerInterface, RiskyToolInterface, ...
+    │   GuardrailAuditLoggerInterface, RiskyToolInterface,
+    │   LlmMiddlewareInterface, AgentMiddlewareInterface, ...
     │
 Layer 2: Subsystems
     │   ToolRegistry, GuardrailRunner, ToolGuardrailRunner,
-    │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline,
+    │   SkillRegistry, PromptBuilder,
+    │   LlmCallRequest (immutable DTO), LlmResponse (DTO),
     │   ToolDispatcher, TurnExecutor,
     │   LlmAdapter (OpenAiAdapter, AnthropicAdapter),
     │   Stream (SseWriter)
     │
-Layer 3: Agent Core
+Layer 3a: LLM Layer
+    │   LlmClient, LlmMiddlewarePipeline,
+    │   LlmCallRequest, LlmResponse, LlmCallMeta
+    │
+Layer 3b: Agent Core
     │   AgentRunner, Agent (DTO), ToolDispatcher, LoopState,
-    │   AgentRunContext, AgentResult
+    │   AgentRunContext, AgentResult, AgentMiddlewarePipeline
     │
 Layer 4: Facade
     │   Agentic — unified entry point
@@ -45,6 +51,34 @@ $agentConfig = [
     'cancellation_timeout_ms' => 30000,
 ];
 ```
+
+### LLM / Agent Layer Separation
+
+Layer 3 is split into two independent sub-layers so that direct LLM calls and full agent loops can be used independently.
+
+**Layer 3a (LLM Layer)** handles raw LLM communication. `LlmClient` sends requests through `LlmMiddlewarePipeline` which exposes four hooks:
+
+| Hook | Purpose |
+|------|---------|
+| `beforeCall` | Inspect or modify the request before it reaches the adapter |
+| `afterCall` | Observe the response (logging, metrics, cost tracking) |
+| `onRetry` | Notified when the adapter retries a failed request |
+| `onFailover` | Notified when the client switches to a different provider |
+
+The pipeline returns a `LlmResponse` DTO containing `content`, `usage`, `provider`, `model`, `reasoningContent`, `toolCalls`, and `latencyMs`. `Agentic::chat()` and `chatStream()` bypass `AgentRunner` entirely and call `LlmClient` directly.
+
+**Layer 3b (Agent Core)** handles the ReAct loop. `AgentRunner` orchestrates iterations using `TurnExecutor` internally, which in turn delegates to `LlmClient` for each LLM call. `AgentMiddlewarePipeline` exposes four hooks at the agent level:
+
+| Hook | Purpose |
+|------|---------|
+| `beforeLoop` | Inspect or modify messages before the loop starts |
+| `afterLoop` | Inspect or transform the `AgentResult` after the loop ends |
+| `beforeToolCall` | Intercept a tool call; return a string to short-circuit execution |
+| `afterToolCall` | Observe tool call results (logging, metrics) |
+
+This separation means consumers can use the LLM layer for simple chat without pulling in the agent loop, guardrails, or tool dispatch machinery.
+
+**`LlmCallRequest`** is an immutable DTO passed through the LLM middleware chain. It carries `messages`, `options`, `provider`, and `model` as readonly properties. A `with(array $overrides): self` method produces a new instance with selective field overrides, following the immutable pattern used throughout the SDK.
 
 ### Agent Loop
 
@@ -98,10 +132,10 @@ AgentRunner implements the standard ReAct (Reasoning + Acting) loop:
 2. Approval Store bypass             → pre-approved tools skip policy check
 3. Permission Policy (deny/ask/allow) → can deny or require user confirmation
 4. Human Approval (if ASK)           → ONCE / TOOL / SESSION / DENY
-5. Middleware (beforeToolCall)        → can intercept
+5. AgentMiddleware (beforeToolCall)  → can intercept
 6. Agent-level handler               → or ToolRegistry::execute()
 7. Tool Guardrail (output check)     → can block or transform output
-8. Middleware (afterToolCall)
+8. AgentMiddleware (afterToolCall)
 ```
 
 Approval prompts are customizable via `Support\ApprovalPrompts` — override static properties for i18n.
@@ -155,23 +189,40 @@ This ensures concurrency safety in Hyperf's coroutine model — per-agent filter
 
 ## DI Bindings
 
-`ConfigProvider` registers all services:
+`ConfigProvider` registers all services across four layers:
 
 ```php
-// Interface → Implementation
+// Layer 1: Foundation interfaces → implementations
+Contract\ContextEngineInterface::class => NullContextEngine::class,
+Contract\MemoryProviderInterface::class => NullMemoryProvider::class,
 Contract\MessageStoreInterface::class => Session\MemoryMessageStore::class,
+Contract\TraceExporterInterface::class => Tracing\LogTraceExporter::class,
 Contract\ToolPermissionPolicyInterface::class => Policy\ConfigToolPermissionPolicy::class,
 Contract\GuardrailAuditLoggerInterface::class => GuardrailAuditLogger::class,
 Contract\PermissionApprovalStoreInterface::class => PermissionApprovalStore::class,
 
-// Factory (__invoke produces the instance)
+// Layer 2: Subsystems
+Persona\PersonaLoader::class => Persona\PersonaLoader::class,
+Loader\AnnotationToolLoader::class => Loader\AnnotationToolLoader::class,
+Loader\ConfigToolLoader::class => Loader\ConfigToolLoader::class,
+Loader\SkillLoader::class => Loader\SkillLoader::class,
 Skill\SkillRegistry::class => SkillRegistryFactory::class,
 ToolRegistry::class => ToolRegistryFactory::class,
 
-// Self-registration (constructor injects dependencies)
+// Layer 3a: LLM Layer
+LlmMiddlewarePipeline::class => LlmMiddlewarePipeline::class,
+LlmClient::class => LlmClientFactory::class,
+
+// Layer 3b: Agent Core
+PromptBuilder::class => PromptBuilder::class,
+GuardrailRunner::class => GuardrailRunner::class,
+ToolGuardrailRunner::class => ToolGuardrailRunner::class,
+AgentMiddlewarePipeline::class => AgentMiddlewarePipeline::class,
 ToolDispatcher::class => ToolDispatcher::class,
 AgentRunner::class => AgentRunner::class,
-Agentic::class => Agentic::class,
+
+// Layer 4: Facade
+Agentic::class => AgenticFactory::class,
 ```
 
 ## Concurrency Safety
@@ -199,6 +250,8 @@ src/
 │   ├── SkillInterface.php
 │   ├── MessageStoreInterface.php
 │   ├── SessionStoreInterface.php
+│   ├── LlmMiddlewareInterface.php
+│   ├── AgentMiddlewareInterface.php
 │   └── ...
 ├── Tool/              # Tool system
 │   └── Builtin/       # Built-in tools (AskTool, SkillTool)
@@ -215,6 +268,8 @@ src/
 ├── Loader/            # Loaders (Annotation, Config, Skill)
 ├── Event/             # Event system
 ├── Tracing/           # Distributed tracing
+├── Middleware/        # Built-in middleware implementations
+│   └── AuditMiddleware.php
 ├── Support/           # Support utilities
 │   ├── ApprovalPrompts.php    # Customizable approval prompt templates
 │   ├── ConfigLoader.php
@@ -226,17 +281,18 @@ src/
 │   └── AnthropicAdapter.php # Anthropic /v1/messages
 ├── Stream/            # Streaming transport adapters
 │   └── SseWriter.php        # OpenAI-compatible SSE writer
-├── AgentRunner.php    # Layer 3: Agent core
-├── TurnExecutor.php   # Layer 3: Single turn execution (unified sync/stream)
+├── AgentRunner.php    # Layer 3b: Agent core
+├── TurnExecutor.php   # Layer 3b: Single turn execution (unified sync/stream)
 ├── Agent.php          # Agent DTO (config as data)
-├── ToolDispatcher.php # Layer 3: Tool dispatch chain (guardrails → permissions → execution)
+├── ToolDispatcher.php # Layer 3b: Tool dispatch chain (guardrails → permissions → execution)
 ├── LoopState.php      # Per-request mutable loop accumulator
 ├── AgentRunContext.php # Per-request immutable context
 ├── AgentResult.php    # Agent execution result
+├── AgentMiddlewarePipeline.php # Layer 3b: Agent middleware pipeline
 ├── ApprovalChoice.php # User approval choice enum (ONCE/TOOL/SESSION/DENY)
 ├── PermissionMode.php # Permission mode enum (DEFAULT/AUTO/STRICT/READONLY)
 ├── PermissionApprovalStore.php # In-memory approval store (wildcard + dual-scope)
-├── PromptBuilder.php  # Prompt builder
+├── PromptBuilder.php  # Layer 3b: Prompt builder
 ├── ToolRegistry.php   # Tool registry
 ├── ToolGuardrailRunner.php  # Tool-level guardrail runner
 ├── ToolGuardrailResult.php  # Tool guardrail result value object
@@ -245,9 +301,11 @@ src/
 ├── GuardrailRunner.php # Guardrail runner (with priority + audit)
 ├── GuardrailAuditEntry.php  # Audit log entry
 ├── GuardrailAuditLogger.php # Default audit logger
-├── LlmClient.php      # LLM client
-├── LlmCallMeta.php    # Middleware LLM call metadata DTO
-├── LlmResponse.php    # Pure LLM chat response DTO
+├── LlmClient.php      # Layer 3a: LLM client
+├── LlmCallRequest.php # Layer 3a: Immutable LLM call request DTO
+├── LlmResponse.php    # Layer 3a: Pure LLM chat response DTO
+├── LlmCallMeta.php    # Layer 3a: LLM call metadata DTO
+├── LlmMiddlewarePipeline.php # Layer 3a: LLM middleware pipeline
 ├── LlmClientFactory.php   # Hyperf DI factory for LlmClient
 ├── Agentic.php        # Layer 4: Unified facade
 ├── AgenticFactory.php # Hyperf DI factory for Agentic

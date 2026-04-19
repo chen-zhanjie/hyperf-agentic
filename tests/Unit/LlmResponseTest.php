@@ -13,8 +13,8 @@ class LlmResponseTest extends TestCase
         $response = new LlmResponse(
             content: 'Hello!',
             usage: ['prompt_tokens' => 10, 'completion_tokens' => 5],
-            model: 'gpt-4o',
             provider: 'openai',
+            model: 'gpt-4o',
             reasoningContent: 'thinking...',
             toolCalls: [['name' => 'search']],
         );
@@ -29,12 +29,16 @@ class LlmResponseTest extends TestCase
 
     public function testDefaultValues(): void
     {
-        $response = new LlmResponse(content: 'Hi', usage: []);
+        $response = new LlmResponse(
+            content: 'Hi',
+            usage: [],
+            provider: 'test',
+            model: 'test-model',
+        );
 
-        $this->assertNull($response->model);
-        $this->assertNull($response->provider);
         $this->assertNull($response->reasoningContent);
         $this->assertSame([], $response->toolCalls);
+        $this->assertSame(0, $response->latencyMs);
     }
 
     public function testToArray(): void
@@ -42,8 +46,8 @@ class LlmResponseTest extends TestCase
         $response = new LlmResponse(
             content: 'Hello!',
             usage: ['prompt_tokens' => 10, 'completion_tokens' => 5],
-            model: 'gpt-4o',
             provider: 'openai',
+            model: 'gpt-4o',
         );
 
         $array = $response->toArray();
@@ -59,6 +63,8 @@ class LlmResponseTest extends TestCase
         $response = new LlmResponse(
             content: 'test',
             usage: [],
+            provider: 'test',
+            model: 'test',
             reasoningContent: 'reasoning',
             toolCalls: [['id' => 'call_1']],
         );
@@ -67,5 +73,54 @@ class LlmResponseTest extends TestCase
 
         $this->assertSame('reasoning', $array['reasoning_content']);
         $this->assertSame([['id' => 'call_1']], $array['tool_calls']);
+    }
+
+    public function testHelperMethods(): void
+    {
+        $response = new LlmResponse(
+            content: 'test',
+            usage: ['prompt_tokens' => 100, 'completion_tokens' => 50],
+            provider: 'openai',
+            model: 'gpt-4o',
+        );
+
+        $this->assertSame(100, $response->promptTokens());
+        $this->assertSame(50, $response->completionTokens());
+        $this->assertSame(150, $response->totalTokens());
+
+        $meta = $response->toCallMeta();
+        $this->assertSame('openai', $meta->provider);
+        $this->assertSame('gpt-4o', $meta->model);
+        $this->assertSame(100, $meta->promptTokens);
+        $this->assertSame(50, $meta->completionTokens);
+        $this->assertSame(150, $meta->totalTokens);
+    }
+
+    public function testToArrayIncludesLatencyWhenPositive(): void
+    {
+        $response = new LlmResponse(
+            content: 'test',
+            usage: [],
+            provider: 'openai',
+            model: 'gpt-4o',
+            latencyMs: 250,
+        );
+
+        $array = $response->toArray();
+        $this->assertSame(250, $array['latency_ms']);
+    }
+
+    public function testToArrayOmitsLatencyWhenZero(): void
+    {
+        $response = new LlmResponse(
+            content: 'test',
+            usage: [],
+            provider: 'openai',
+            model: 'gpt-4o',
+            latencyMs: 0,
+        );
+
+        $array = $response->toArray();
+        $this->assertArrayNotHasKey('latency_ms', $array);
     }
 }

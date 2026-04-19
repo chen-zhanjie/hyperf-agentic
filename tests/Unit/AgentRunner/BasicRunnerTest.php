@@ -5,12 +5,11 @@ namespace ChenZhanjie\Agentic\Tests\Unit\AgentRunner;
 
 use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\AgentResult;
-use ChenZhanjie\Agentic\Contract\MiddlewareInterface;
+use ChenZhanjie\Agentic\Contract\AgentMiddlewareInterface;
 use ChenZhanjie\Agentic\Contract\SkillInterface;
 use ChenZhanjie\Agentic\GuardrailRunner;
-use ChenZhanjie\Agentic\LlmCallMeta;
 use ChenZhanjie\Agentic\LlmClient;
-use ChenZhanjie\Agentic\MiddlewarePipeline;
+use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
 use ChenZhanjie\Agentic\PromptBuilder;
@@ -136,22 +135,20 @@ class BasicRunnerTest extends TestCase
         $registry = new ToolRegistry();
         $registry->register($tool);
 
-        $middleware = new class implements MiddlewareInterface {
+        $middleware = new class implements AgentMiddlewareInterface {
             public function beforeLoop(array $messages, array $agentConfig): array { return $messages; }
             public function afterLoop(AgentResult $result): AgentResult { return $result; }
-            public function beforeLlmCall(array $messages, array $options): array { return $options; }
-            public function afterLlmCall(array $response, LlmCallMeta $meta): void {}
-            public function beforeToolCall(string $name, array $arguments): ?string
+            public function beforeToolCall(string $name, array $arguments, array $runContext = []): ?string
             {
                 if ($name === 'dangerous') {
                     return 'Tool blocked by security policy';
                 }
                 return null;
             }
-            public function afterToolCall(string $name, array $arguments, string $result): void {}
+            public function afterToolCall(string $name, array $arguments, string $result, array $runContext = []): void {}
         };
 
-        $pipeline = new MiddlewarePipeline();
+        $pipeline = new AgentMiddlewarePipeline();
         $pipeline->add($middleware);
 
         $llm = $this->createMockLlm([
@@ -375,7 +372,7 @@ class BasicRunnerTest extends TestCase
         ]);
 
         $builder = new PromptBuilder();
-        $runner = new AgentRunner($llm, $builder, new ToolRegistry(), new GuardrailRunner(), new MiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
+        $runner = new AgentRunner($llm, $builder, new ToolRegistry(), new GuardrailRunner(), new AgentMiddlewarePipeline(), new ToolGuardrailRunner(), new ConfigToolPermissionPolicy());
 
         $runner->run(
             [['role' => 'user', 'content' => 'hi']],

@@ -7,15 +7,11 @@ use ChenZhanjie\Agentic\Contract\HumanInputResolverInterface;
 use ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface;
 use ChenZhanjie\Agentic\Contract\ToolPermissionPolicyInterface;
 use ChenZhanjie\Agentic\Event\AgentEventType;
-use ChenZhanjie\Agentic\ToolDispatcher;
 
 /**
  * Executes a single turn in the agent loop.
  *
- * Unifies the 4 previously duplicated methods (executeTurn, executeStreamTurn,
- * runGraceTurn, runStreamGraceTurn) into a single parameterized class.
- *
- * Flow: build ephemeral → middleware → call LLM → record usage →
+ * Flow: build ephemeral → call LLM → record usage →
  *       if text: guardrail → emit complete → return result
  *       if tools: process → return null
  */
@@ -24,22 +20,11 @@ class TurnExecutor
     public function __construct(
         private readonly LlmClient $llmClient,
         private readonly PromptBuilder $promptBuilder,
-        private readonly MiddlewarePipeline $middleware,
         private readonly ToolDispatcher $toolDispatcher,
     ) {}
 
     /**
      * Execute a single agent loop turn.
-     *
-     * @param array              $fullMessages  Conversation messages (modified by reference)
-     * @param string             $systemMessage Base system prompt
-     * @param array              $toolSchemas   Tool definitions for LLM
-     * @param array              $options       Runtime options
-     * @param callable|null      $onEvent       Event callback
-     * @param LoopState          $loop          Loop state tracker
-     * @param AgentRunContext    $context       Per-run context
-     * @param bool               $stream        Use streaming LLM call
-     * @param bool               $grace         Grace turn (budget exhausted, one last chance)
      */
     public function execute(
         array &$fullMessages,
@@ -52,7 +37,6 @@ class TurnExecutor
         bool $stream = false,
         bool $grace = false,
     ): ?AgentResult {
-        // Grace turns increment iteration count (normal turns are incremented by runLoop)
         if ($grace) {
             ++$loop->iterations;
         }
@@ -66,54 +50,27 @@ class TurnExecutor
 
         $fullMessages[0]['content'] = $systemMessage . "\n\n---\n\n" . $ephemeral;
 
-        // Middleware — before LLM call
-        $llmOptions = $this->middleware->beforeLlmCall($fullMessages, [
-            'tools' => $toolSchemas,
-        ]);
+        $llmOptions = ['tools' => $toolSchemas];
 
         $this->emitEvent($onEvent, AgentEventType::THINKING, [
             'iteration' => $loop->iterations,
         ]);
 
-        // Call LLM (sync or streaming)
+        // Call LLM (sync or streaming) — LLM middleware runs inside LlmClient
         if ($stream) {
-            [$content, $toolCalls, $usage, $reasoningContent] = $this->callLlmStream(
-                $fullMessages, $llmOptions, $onEvent,
-            );
+            $llmResponse = $this->callLlmStream($fullMessages, $llmOptions, $onEvent);
         } else {
-            [$content, $toolCalls, $usage, $reasoningContent] = $this->callLlmSync(
-                $fullMessages, $llmOptions, $onEvent,
-            );
+            $llmResponse = $this->callLlmSync($fullMessages, $llmOptions, $onEvent);
         }
 
-        // Track token usage
-        $loop->recordUsage(
-            (int) ($usage['prompt_tokens'] ?? 0),
-            (int) ($usage['completion_tokens'] ?? 0),
-        );
-
-        $response = [
-            'content' => $content,
-            'tool_calls' => $toolCalls,
-            'usage' => $usage,
-            'reasoning_content' => $reasoningContent,
-        ];
-
-        $promptTokens = (int) ($usage['prompt_tokens'] ?? 0);
-        $completionTokens = (int) ($usage['completion_tokens'] ?? 0);
-        $this->middleware->afterLlmCall($response, new LlmCallMeta(
-            provider: $options['provider'] ?? '',
-            model: $options['model'] ?? '',
-            promptTokens: $promptTokens,
-            completionTokens: $completionTokens,
-            totalTokens: $promptTokens + $completionTokens,
-        ));
+        // Track token usage from structured LlmResponse
+        $loop->recordUsage($llmResponse->promptTokens(), $llmResponse->completionTokens());
 
         // No tool calls → text response → done
-        if (empty($toolCalls)) {
+        if (empty($llmResponse->toolCalls)) {
             return $this->handleTextResponse(
-                $content,
-                $reasoningContent,
+                $llmResponse->content,
+                $llmResponse->reasoningContent,
                 $onEvent,
                 $loop,
                 $context,
@@ -121,69 +78,50 @@ class TurnExecutor
         }
 
         // Tool calls — process each one
-        $loop->recordToolCalls(count($toolCalls));
+        $loop->recordToolCalls(count($llmResponse->toolCalls));
 
         $fullMessages[] = [
             'role' => 'assistant',
-            'content' => $content,
-            'tool_calls' => $toolCalls,
+            'content' => $llmResponse->content,
+            'tool_calls' => $llmResponse->toolCalls,
         ];
 
         $callIdPrefix = $grace ? 'grace' : (string) $loop->iterations;
         $enforceParallel = !$grace;
 
         $this->toolDispatcher->processToolCalls(
-            $toolCalls, $fullMessages, $onEvent,
+            $llmResponse->toolCalls, $fullMessages, $onEvent,
             $callIdPrefix, $enforceParallel, $context,
         );
 
         return null; // Tool calls processed — continue loop
     }
 
-    /**
-     * Call LLM synchronously and return normalized parts.
-     *
-     * @return array{0: string, 1: array, 2: array, 3: string|null}
-     */
-    private function callLlmSync(array $fullMessages, array $llmOptions, ?callable $onEvent): array
+    private function callLlmSync(array $fullMessages, array $llmOptions, ?callable $onEvent): LlmResponse
     {
-        $response = $this->llmClient->chat($fullMessages, $llmOptions);
+        $llmResponse = $this->llmClient->chat($fullMessages, $llmOptions);
 
-        $content = is_string($response['content'] ?? null) ? $response['content'] : (string) ($response['content'] ?? '');
-
-        if ($content !== '') {
+        if ($llmResponse->content !== '') {
             $this->emitEvent($onEvent, AgentEventType::TEXT_DELTA, [
-                'content' => $content,
+                'content' => $llmResponse->content,
             ]);
         }
 
-        $reasoningContent = $response['reasoning_content'] ?? null;
-        if ($reasoningContent !== null && $reasoningContent !== '') {
+        if ($llmResponse->reasoningContent !== null && $llmResponse->reasoningContent !== '') {
             $this->emitEvent($onEvent, AgentEventType::REASONING_DELTA, [
-                'content' => $reasoningContent,
+                'content' => $llmResponse->reasoningContent,
             ]);
         }
 
-        return [
-            $content,
-            $response['tool_calls'] ?? [],
-            $response['usage'] ?? [],
-            $reasoningContent,
-        ];
+        return $llmResponse;
     }
 
-    /**
-     * Call LLM with streaming and return normalized parts.
-     * Text content is accumulated from stream chunks, not from the response array.
-     *
-     * @return array{0: string, 1: array, 2: array, 3: string|null}
-     */
-    private function callLlmStream(array $fullMessages, array $llmOptions, ?callable $onEvent): array
+    private function callLlmStream(array $fullMessages, array $llmOptions, ?callable $onEvent): LlmResponse
     {
         $textBuffer = '';
         $reasoningBuffer = '';
 
-        $response = $this->llmClient->chatStream(
+        $llmResponse = $this->llmClient->chatStream(
             $fullMessages,
             $llmOptions,
             function (array $chunk) use ($onEvent, &$textBuffer, &$reasoningBuffer): void {
@@ -200,17 +138,21 @@ class TurnExecutor
             },
         );
 
-        // Use accumulated textBuffer (not response content which is empty for streaming)
-        $content = $textBuffer !== '' ? $textBuffer : (string) ($response['content'] ?? '');
-        $toolCalls = $response['tool_calls'] ?? [];
-        $usage = $response['usage'] ?? [];
-        $reasoningContent = $reasoningBuffer ?: ($response['reasoning_content'] ?? null);
-
-        return [$content, $toolCalls, $usage, $reasoningContent];
+        // Override content with accumulated buffers for streaming
+        return new LlmResponse(
+            content: $textBuffer !== '' ? $textBuffer : $llmResponse->content,
+            usage: $llmResponse->usage,
+            provider: $llmResponse->provider,
+            model: $llmResponse->model,
+            reasoningContent: $reasoningBuffer ?: $llmResponse->reasoningContent,
+            toolCalls: $llmResponse->toolCalls,
+            latencyMs: $llmResponse->latencyMs,
+        );
     }
 
     /**
      * Handle a text-only response: guardrail check → emit complete → return result.
+     * afterLoop is NOT called here — it is called by AgentRunner after the loop ends.
      */
     private function handleTextResponse(
         string $content,
@@ -242,8 +184,6 @@ class TurnExecutor
             completionTokens: $loop->totalCompletionTokens,
             toolCalls: $loop->totalToolCalls,
         );
-
-        $result = $this->middleware->afterLoop($result);
 
         $this->emitEvent($onEvent, AgentEventType::COMPLETE, [
             'iterations' => $loop->iterations,

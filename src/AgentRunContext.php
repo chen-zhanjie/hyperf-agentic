@@ -34,6 +34,7 @@ class AgentRunContext
         public readonly array $agentToolHandlers = [],
         public readonly ?CancellationToken $cancellationToken = null,
         public readonly ?string $sessionId = null,
+        public readonly string $agentName = '',
     ) {}
 
     public function isCancelled(): bool

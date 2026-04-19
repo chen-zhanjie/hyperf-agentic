@@ -472,7 +472,7 @@ $response->toArray(); // 转为关联数组（向后兼容）
 
 ## LlmCallMeta
 
-传递给 `MiddlewareInterface::afterLlmCall()` 用于可观测性。
+传递给 `LlmMiddlewareInterface::afterCall()` 用于可观测性。
 
 ```php
 public function afterLlmCall(array $response, LlmCallMeta $meta): void

@@ -9,16 +9,23 @@ Layer 1: Contract（接口层）
     │   ToolInterface, GuardrailInterface, SkillInterface,
     │   MessageStoreInterface, SessionStoreInterface,
     │   ToolGuardrailInterface, ToolPermissionPolicyInterface,
-    │   GuardrailAuditLoggerInterface, RiskyToolInterface, ...
+    │   GuardrailAuditLoggerInterface, RiskyToolInterface,
+    │   LlmMiddlewareInterface, AgentMiddlewareInterface, ...
     │
 Layer 2: Subsystems（子系统）
     │   ToolRegistry, GuardrailRunner, ToolGuardrailRunner,
-    │   SkillRegistry, PromptBuilder, LlmClient, MiddlewarePipeline,
-    │   ToolDispatcher, LlmAdapter (OpenAiAdapter, AnthropicAdapter)
+    │   SkillRegistry, PromptBuilder, ToolDispatcher,
+    │   LlmCallRequest, LlmResponse, LlmCallMeta,
+    │   LlmAdapter (OpenAiAdapter, AnthropicAdapter),
+    │   TurnExecutor, Stream (SseWriter)
     │
-Layer 3: Agent Core（Agent 核心）
-    │   AgentRunner, ToolDispatcher, LoopState,
-    │   AgentRunContext, AgentResult
+Layer 3a: LLM Layer（LLM 层）
+    │   LlmClient, LlmMiddlewarePipeline
+    │   (beforeCall / afterCall / onRetry / onFailover)
+    │
+Layer 3b: Agent Core（Agent 核心）
+    │   AgentRunner, AgentMiddlewarePipeline, ToolDispatcher,
+    │   LoopState, AgentRunContext, AgentResult
     │
 Layer 4: Facade（门面）
     │   Agentic — 统一入口
@@ -87,19 +94,42 @@ AgentRunner 实现了标准的 ReAct（Reasoning + Acting）循环：
 └─────────────────────────────┘
 ```
 
+### LLM / Agent 层分离
+
+v0.10 将 Layer 3 拆分为 LLM 层（3a）和 Agent 层（3b），使 `chat()` 和 `chatStream()` 等纯对话调用无需经过 AgentRunner 循环。
+
+**Layer 3a — LLM 层**：`LlmClient` + `LlmMiddlewarePipeline`。中间件钩子为 `beforeCall`、`afterCall`、`onRetry`、`onFailover`，返回 `LlmResponse` DTO。`Agentic::chat()` 和 `chatStream()` 直接调用 `LlmClient`，绕过 AgentRunner。
+
+**Layer 3b — Agent 层**：`AgentRunner` + `AgentMiddlewarePipeline`。中间件钩子为 `beforeLoop`、`afterLoop`、`beforeToolCall`、`afterToolCall`。AgentRunner 内部的 `TurnExecutor` 使用 `LlmClient`（Layer 3a）完成每次 LLM 调用。
+
+### LlmCallRequest
+
+`LlmCallRequest` 是不可变 DTO，携带单次 LLM 调用的全部参数：
+
+- `messages` — 消息数组
+- `options` — 请求选项（temperature 等）
+- `provider` — LLM 供应商标识
+- `model` — 模型标识
+
+通过 `with()` 方法返回新实例，实现不可变修改：
+
+```php
+$newRequest = $request->with(['model' => 'gpt-4o', 'options' => ['temperature' => 0.2]]);
+```
+
 ### 工具分发链
 
 `ToolDispatcher` 拥有工具分发链，注入到 `AgentRunner` 中：
 
 ```
-1. 工具护栏（输入检查）        → 可拦截或修正参数
-2. 审批存储绕过                → 已预审批的工具跳过策略检查
-3. 权限策略（deny/ask/allow）  → 可拒绝或要求用户确认
-4. 人工审批（如果为 ASK）      → ONCE / TOOL / SESSION / DENY
-5. 中间件（beforeToolCall）    → 可拦截
-6. Agent 级处理器              → 或 ToolRegistry::execute()
-7. 工具护栏（输出检查）        → 可拦截或转换输出
-8. 中间件（afterToolCall）
+1. 工具护栏（输入检查）              → 可拦截或修正参数
+2. 审批存储绕过                      → 已预审批的工具跳过策略检查
+3. 权限策略（deny/ask/allow）        → 可拒绝或要求用户确认
+4. 人工审批（如果为 ASK）            → ONCE / TOOL / SESSION / DENY
+5. AgentMiddleware（beforeToolCall）  → 可拦截
+6. Agent 级处理器                    → 或 ToolRegistry::execute()
+7. 工具护栏（输出检查）              → 可拦截或转换输出
+8. AgentMiddleware（afterToolCall）
 ```
 
 审批提示可通过 `Support\ApprovalPrompts` 自定义 — 覆盖静态属性以实现国际化。
@@ -156,20 +186,37 @@ $filteredRegistry = $registry->only(['search', 'ask']);
 `ConfigProvider` 注册所有服务：
 
 ```php
-// 接口 → 实现
+// Layer 1: Foundation — 接口 → 实现
+Contract\ContextEngineInterface::class => NullContextEngine::class,
+Contract\MemoryProviderInterface::class => NullMemoryProvider::class,
 Contract\MessageStoreInterface::class => Session\MemoryMessageStore::class,
+Contract\TraceExporterInterface::class => Tracing\LogTraceExporter::class,
 Contract\ToolPermissionPolicyInterface::class => Policy\ConfigToolPermissionPolicy::class,
 Contract\GuardrailAuditLoggerInterface::class => GuardrailAuditLogger::class,
 Contract\PermissionApprovalStoreInterface::class => PermissionApprovalStore::class,
 
-// 工厂（__invoke 产生实例）
+// Layer 2: Subsystems（子系统）
+Persona\PersonaLoader::class => Persona\PersonaLoader::class,
+Loader\AnnotationToolLoader::class => Loader\AnnotationToolLoader::class,
+Loader\ConfigToolLoader::class => Loader\ConfigToolLoader::class,
+Loader\SkillLoader::class => Loader\SkillLoader::class,
 Skill\SkillRegistry::class => SkillRegistryFactory::class,
 ToolRegistry::class => ToolRegistryFactory::class,
 
-// 自注册（构造函数注入依赖）
+// Layer 3a: LLM Layer（LLM 层）
+LlmMiddlewarePipeline::class => LlmMiddlewarePipeline::class,
+LlmClient::class => LlmClientFactory::class,
+
+// Layer 3b: Agent Core（Agent 核心）
+PromptBuilder::class => PromptBuilder::class,
+GuardrailRunner::class => GuardrailRunner::class,
+ToolGuardrailRunner::class => ToolGuardrailRunner::class,
+AgentMiddlewarePipeline::class => AgentMiddlewarePipeline::class,
 ToolDispatcher::class => ToolDispatcher::class,
 AgentRunner::class => AgentRunner::class,
-Agentic::class => Agentic::class,
+
+// Layer 4: Facade（门面）
+Agentic::class => AgenticFactory::class,
 ```
 
 ## 并发安全
@@ -197,6 +244,8 @@ src/
 │   ├── SkillInterface.php
 │   ├── MessageStoreInterface.php
 │   ├── SessionStoreInterface.php
+│   ├── LlmMiddlewareInterface.php    # LLM 中间件契约
+│   ├── AgentMiddlewareInterface.php  # Agent 中间件契约
 │   └── ...
 ├── Tool/              # 工具系统
 │   └── Builtin/       # 内置工具（AskTool, SkillTool）
@@ -224,10 +273,17 @@ src/
 │   └── AnthropicAdapter.php # Anthropic /v1/messages
 ├── Stream/            # 流式传输适配器
 │   └── SseWriter.php        # OpenAI 兼容 SSE 写入器
-├── AgentRunner.php    # Layer 3: Agent 核心
-├── TurnExecutor.php   # Layer 3: 单轮执行（统一同步/流式）
+├── LlmClient.php             # Layer 3a: LLM 客户端
+├── LlmCallRequest.php        # Layer 3a: LLM 调用请求不可变 DTO
+├── LlmResponse.php           # Layer 3a: 纯 LLM 对话响应 DTO
+├── LlmCallMeta.php           # Layer 3a: 中间件 LLM 调用元数据 DTO
+├── LlmMiddlewarePipeline.php # Layer 3a: LLM 中间件管道
+├── LlmClientFactory.php      # Layer 3a: Hyperf DI 工厂（LlmClient）
+├── AgentMiddlewarePipeline.php # Layer 3b: Agent 中间件管道
+├── AgentRunner.php            # Layer 3b: Agent 核心
+├── TurnExecutor.php           # Layer 3b: 单轮执行（统一同步/流式）
 ├── Agent.php          # Agent DTO（配置即数据）
-├── ToolDispatcher.php # Layer 3: 工具分发链（护栏 → 权限 → 执行）
+├── ToolDispatcher.php # Layer 3b: 工具分发链（护栏 → 权限 → 执行）
 ├── LoopState.php      # 每次请求的可变循环累加器
 ├── AgentRunContext.php # Per-Request 不可变上下文
 ├── AgentResult.php    # Agent 执行结果
@@ -243,11 +299,7 @@ src/
 ├── GuardrailRunner.php # 护栏运行器（含优先级 + 审计）
 ├── GuardrailAuditEntry.php  # 审计日志条目
 ├── GuardrailAuditLogger.php # 默认审计日志器
-├── LlmClient.php      # LLM 客户端
-├── LlmCallMeta.php    # 中间件 LLM 调用元数据 DTO
-├── LlmResponse.php    # 纯 LLM 对话响应 DTO
-├── LlmClientFactory.php   # Hyperf DI 工厂（LlmClient）
 ├── Agentic.php        # Layer 4: 统一门面
-├── AgenticFactory.php # Hyperf DI 工厂（Agentic）
+├── AgenticFactory.php # Layer 4: Hyperf DI 工厂（Agentic）
 └── ConfigProvider.php # Hyperf DI 配置
 ```

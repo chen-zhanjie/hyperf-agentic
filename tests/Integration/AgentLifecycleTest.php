@@ -9,7 +9,7 @@ use ChenZhanjie\Agentic\Contract\ToolInterface;
 use ChenZhanjie\Agentic\GuardrailResult;
 use ChenZhanjie\Agentic\GuardrailRunner;
 use ChenZhanjie\Agentic\GuardrailMode;
-use ChenZhanjie\Agentic\MiddlewarePipeline;
+use ChenZhanjie\Agentic\AgentMiddlewarePipeline;
 use ChenZhanjie\Agentic\Persona\Persona;
 use ChenZhanjie\Agentic\PermissionApprovalStore;
 use ChenZhanjie\Agentic\Policy\ConfigToolPermissionPolicy;
@@ -33,7 +33,7 @@ class AgentLifecycleTest extends TestCase
             promptBuilder: new PromptBuilder(),
             toolRegistry: $registry ?? new ToolRegistry(),
             guardrailRunner: $guardrails ?? new GuardrailRunner(),
-            middleware: new MiddlewarePipeline(),
+            agentMiddleware: new AgentMiddlewarePipeline(),
             toolGuardrailRunner: new ToolGuardrailRunner(),
             permissionPolicy: new ConfigToolPermissionPolicy(),
             approvalStore: $withApprovalStore ? new PermissionApprovalStore() : null,
@@ -84,16 +84,56 @@ class AgentLifecycleTest extends TestCase
             }
             public function execute(array $arguments): string {
                 $expr = $arguments['expression'] ?? '';
-                // Only allow safe math characters
                 if (!preg_match('/^[\d\s\+\-\*\/\(\)\.]+$/', $expr)) {
                     return 'Error: invalid expression';
                 }
                 try {
-                    $result = eval("return {$expr};");
+                    $result = self::safeMath($expr);
                     return "{$expr} = {$result}";
                 } catch (\Throwable) {
                     return 'Error: could not evaluate expression';
                 }
+            }
+
+            private static function safeMath(string $expr): float|int
+            {
+                $expr = preg_replace('/\s+/', '', $expr);
+                $tokens = [];
+                for ($i = 0, $len = strlen($expr); $i < $len;) {
+                    $ch = $expr[$i];
+                    if (ctype_digit($ch) || $ch === '.') {
+                        $n = '';
+                        while ($i < $len && (ctype_digit($expr[$i]) || $expr[$i] === '.')) { $n .= $expr[$i++]; }
+                        $tokens[] = (float) $n;
+                    } elseif ($ch === '-' && ($tokens === [] || (!is_numeric(end($tokens)) && end($tokens) !== ')'))) {
+                        $n = '-'; $i++;
+                        while ($i < $len && (ctype_digit($expr[$i]) || $expr[$i] === '.')) { $n .= $expr[$i++]; }
+                        $tokens[] = (float) $n;
+                    } elseif (in_array($ch, ['+','-','*','/','(',')'])) { $tokens[] = $ch; $i++;
+                    } else { $i++; }
+                }
+                $pos = 0;
+                return self::addSub($tokens, $pos);
+            }
+
+            private static function addSub(array $t, int &$p): float|int
+            {
+                $l = self::mulDiv($t, $p);
+                while (isset($t[$p]) && in_array($t[$p], ['+','-'])) { $op = $t[$p++]; $r = self::mulDiv($t, $p); $l = $op === '+' ? $l + $r : $l - $r; }
+                return $l;
+            }
+
+            private static function mulDiv(array $t, int &$p): float|int
+            {
+                $l = self::primary($t, $p);
+                while (isset($t[$p]) && in_array($t[$p], ['*','/'])) { $op = $t[$p++]; $r = self::primary($t, $p); $l = $op === '*' ? $l * $r : $l / $r; }
+                return $l;
+            }
+
+            private static function primary(array $t, int &$p): float|int
+            {
+                if ($t[$p] === '(') { $p++; $r = self::addSub($t, $p); if (isset($t[$p]) && $t[$p] === ')') { $p++; } return $r; }
+                return $t[$p++];
             }
             public function isEnabled(): bool { return true; }
             public function isParallelAllowed(): bool { return true; }

@@ -16,7 +16,7 @@ use ChenZhanjie\Agentic\Skill\SkillRegistry;
  * Agent Runner — thin orchestrator for the agent conversation loop.
  *
  * Delegates turn execution to TurnExecutor and tool dispatch to ToolDispatcher.
- * Layer 3 of the 5-layer architecture.
+ * Uses AgentMiddlewarePipeline for agent-level lifecycle hooks.
  */
 class AgentRunner
 {
@@ -33,7 +33,7 @@ class AgentRunner
         private readonly PromptBuilder $promptBuilder,
         private readonly ToolRegistry $toolRegistry,
         private readonly GuardrailRunner $guardrailRunner,
-        private readonly MiddlewarePipeline $middleware,
+        private readonly AgentMiddlewarePipeline $agentMiddleware,
         private readonly ToolGuardrailRunner $toolGuardrailRunner,
         private readonly ToolPermissionPolicyInterface $permissionPolicy,
         private readonly ?PermissionApprovalStoreInterface $approvalStore = null,
@@ -65,24 +65,13 @@ class AgentRunner
     {
         return $this->toolDispatcher ?? new ToolDispatcher(
             $this->toolRegistry,
-            $this->middleware,
+            $this->agentMiddleware,
             $this->permissionPolicy,
         );
     }
 
     /**
-     * Stream LLM chat chunks directly — no agent loop, passthrough to LlmClient.
-     */
-    public function chatStream(array $messages, array $options, callable $onChunk): array
-    {
-        return $this->llmClient->chatStream($messages, $options, $onChunk);
-    }
-
-    /**
      * Resume a suspended agent session.
-     *
-     * @param array  $state     Suspended state (messages, remaining_iterations, agent_config, agent_name)
-     * @param string $sessionId Session ID
      */
     public function resume(array $state, string $sessionId): AgentResult
     {
@@ -114,6 +103,7 @@ class AgentRunner
             humanInputResolver: $this->humanInputResolver,
             agentToolHandlers: $this->agentToolHandlers,
             sessionId: $setup['sessionId'],
+            agentName: $agentName,
         );
 
         $toolSchemas = $setup['activeRegistry']->getAvailableSchemas();
@@ -161,6 +151,8 @@ class AgentRunner
             return AgentResult::budgetExhausted($loop->iterations, $remainingIterations);
         }
 
+        $result = $this->agentMiddleware->afterLoop($result);
+
         return $result;
     }
 
@@ -198,7 +190,6 @@ class AgentRunner
         return new TurnExecutor(
             llmClient: $this->llmClient,
             promptBuilder: $this->promptBuilder,
-            middleware: $this->middleware,
             toolDispatcher: $this->toolDispatcher(),
         );
     }
@@ -243,6 +234,7 @@ class AgentRunner
             agentToolHandlers: $this->agentToolHandlers,
             cancellationToken: $cancellationToken,
             sessionId: $setup['sessionId'],
+            agentName: $setup['persona']->name,
         );
 
         $inputGuardContext = $context->guardrails->checkInputAsync($messages);
@@ -262,9 +254,9 @@ class AgentRunner
             costBudget: $costBudget,
         );
 
-        $messages = $this->middleware->beforeLoop($messages, $agentConfig);
+        $messages = $this->agentMiddleware->beforeLoop($messages, $agentConfig);
 
-        // Inject resolved model/provider into options for downstream consumers (e.g., LlmCallMeta)
+        // Inject resolved model/provider into options for downstream consumers
         $options['model'] = $options['model'] ?? $options['model_override'] ?? $agentConfig['model'] ?? '';
         $options['provider'] = $options['provider'] ?? $agentConfig['provider'] ?? '';
 
@@ -285,12 +277,13 @@ class AgentRunner
             'fullMessages' => $fullMessages,
             'options' => $options,
             'persona' => $setup['persona'],
-            'model' => $options['model'] ?? $agentConfig['model'] ?? '',
+            'model' => $options['model'] ?? $agentConfig['model'] ?? null,
         ];
     }
 
     /**
      * Execute the agent loop (sync or streaming).
+     * Consolidates afterLoop() call here — not in TurnExecutor.
      */
     private function executeRun(array $ctx, ?callable $onEvent, bool $stream): AgentResult
     {
@@ -342,6 +335,9 @@ class AgentRunner
             return AgentResult::budgetExhausted($loop->iterations, $maxIterations);
         }
 
+        // Consolidated: afterLoop called here, not in TurnExecutor
+        $result = $this->agentMiddleware->afterLoop($result);
+
         return $result;
     }
 
@@ -384,16 +380,13 @@ class AgentRunner
             if ($turnResult !== null) {
                 return $turnResult;
             }
-            // Tool calls processed — continue loop
         }
 
-        return null; // Budget exhausted
+        return null;
     }
 
     /**
      * Shared setup: resolve persona, tools, guardrails, permissions from agent config.
-     *
-     * @return array{persona:Persona,systemPrompt:string,scene:string,activeRegistry:ToolRegistry,activeGuardrails:GuardrailRunner,policy:ToolPermissionPolicyInterface,sessionId:?string,requestApprovalStore:?PermissionApprovalStoreInterface}
      */
     private function resolveRunSetup(array $agentConfig, ?string $sessionId): array
     {
@@ -402,13 +395,11 @@ class AgentRunner
         $scene = $agentConfig['scene'] ?? 'http';
         $toolWhitelist = $agentConfig['tools'] ?? [];
 
-        // Resolve active tool registry
         $activeRegistry = $this->toolRegistry;
         if (!empty($toolWhitelist)) {
             $activeRegistry = $this->toolRegistry->only($toolWhitelist);
         }
 
-        // Resolve active guardrails (per-agent filtering + mode overrides)
         $activeGuardrails = $this->guardrailRunner;
         $guardrailWhitelist = $agentConfig['guardrails'] ?? [];
         if (!empty($guardrailWhitelist)) {
@@ -424,10 +415,8 @@ class AgentRunner
             $activeGuardrails = $activeGuardrails->withModes($modeMap);
         }
 
-        // Build per-request permission policy
         $policy = $this->resolvePermissionPolicy($agentConfig);
 
-        // Clone approval store for per-request isolation
         $requestApprovalStore = $this->approvalStore !== null ? clone $this->approvalStore : null;
         $this->applyAutoApprove($agentConfig, $sessionId, $requestApprovalStore);
 
@@ -443,9 +432,6 @@ class AgentRunner
         ];
     }
 
-    /**
-     * Resolve per-request permission policy from agent config.
-     */
     private function resolvePermissionPolicy(array $agentConfig): ToolPermissionPolicyInterface
     {
         $permissionConfig = $agentConfig['tool_permissions'] ?? [];
@@ -467,9 +453,6 @@ class AgentRunner
         return $this->permissionPolicy;
     }
 
-    /**
-     * Apply auto_approve config — pre-populate the per-request approval store.
-     */
     private function applyAutoApprove(array $agentConfig, ?string $sessionId, ?PermissionApprovalStoreInterface $store): void
     {
         $permissionConfig = $agentConfig['tool_permissions'] ?? [];
@@ -488,9 +471,6 @@ class AgentRunner
         }
     }
 
-    /**
-     * Resolve a Persona from agentConfig.
-     */
     private function resolvePersona(array $agentConfig): Persona
     {
         $persona = $agentConfig['persona'] ?? null;
@@ -513,9 +493,6 @@ class AgentRunner
         );
     }
 
-    /**
-     * Emit event to both internal listeners and external callback.
-     */
     private function emitEvent(?callable $onEvent, AgentEventType $type, array $payload = []): void
     {
         $this->emit($type, $payload);

@@ -5,20 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-04-19
+
+### Added
+
+- **Explicit SSL verification** — `OpenAiAdapter` and `AnthropicAdapter` now set `CURLOPT_SSL_VERIFYPEER` and `CURLOPT_SSL_VERIFYHOST` explicitly, preventing insecure defaults in misconfigured environments
+- **Error logging on chain middleware** — `LlmMiddlewarePipeline::beforeCall()` and `AgentMiddlewarePipeline::beforeLoop()` now log warnings before re-throwing, improving debuggability of middleware failures
+- **Coroutine-aware sleep** — `LlmClient` uses `Swoole\Coroutine\System::sleep()` when running inside a coroutine, preventing worker blocking during retry backoff
+- **beforeToolCall fault tolerance** — `AgentMiddlewarePipeline::beforeToolCall()` now catches middleware exceptions, logs a warning, and returns `null` (pass-through) instead of crashing the tool dispatch chain
+
+### Fixed
+
+- **API key leakage in error messages** — Error messages from `OpenAiAdapter` and `AnthropicAdapter` now truncate the response body to 200 characters, preventing accidental credential or sensitive data exposure in logs
+- **Hardcoded Chinese string** — `ToolDispatcher` tool execution error message changed from Chinese to English for consistency
+- **AuditMiddleware success detection** — Fixed matching against the old Chinese error string (`'工具执行错误'`), now matches the updated English `'Tool execution error'` prefix
+
 ## [0.9.0] - 2026-04-17
 
 ### Added
 
-- **`LlmCallMeta` DTO** — Readonly DTO passed to `MiddlewareInterface::afterLlmCall()` containing `provider`, `model`, `promptTokens`, `completionTokens`, and `totalTokens`
+- **`LlmCallMeta` DTO** — Readonly DTO passed to `LlmMiddlewareInterface::afterCall()` containing `provider`, `model`, `promptTokens`, `completionTokens`, and `totalTokens`
 - **`LlmResponse` DTO** — Readonly DTO returned by `Agentic::chat()` and `Agentic::chatStream()` with `content`, `usage`, `model`, `provider`, `reasoningContent`, `toolCalls`, and `toArray()` for backward compat
-- **Middleware fault tolerance** — Notification methods (`afterLoop`, `afterLlmCall`, `afterToolCall`) now catch exceptions and continue, instead of breaking the agent loop. Chain methods (`beforeLoop`, `beforeLlmCall`) still throw on failure
+- **Middleware fault tolerance** — Notification methods (`afterLoop`, `afterCall`, `afterToolCall`) now catch exceptions and continue, instead of breaking the agent loop. Chain methods (`beforeLoop`, `beforeCall`) still throw on failure
 
 ### Changed
 
-- **BREAKING:** `MiddlewareInterface::afterLlmCall(array $response, array $usage)` → `afterLlmCall(array $response, LlmCallMeta $meta)`. Any middleware implementing the old signature must update
+- **BREAKING:** `MiddlewareInterface` split into `LlmMiddlewareInterface` and `AgentMiddlewareInterface`. Old `MiddlewareInterface` removed
+- **BREAKING:** `MiddlewarePipeline` replaced by `LlmMiddlewarePipeline` and `AgentMiddlewarePipeline`
+- **BREAKING:** `Agentic::chat()` and `chatStream()` now bypass `AgentRunner` and call `LlmClient` directly
 - **BREAKING:** `Agentic::chat()` and `chatStream()` now return `LlmResponse` instead of `array`. Use `$result->content` or `$result->toArray()` for backward compat
-- `AuditMiddleware::afterLlmCall` updated to use `LlmCallMeta`
+- **BREAKING:** `AgentMiddlewareInterface::beforeToolCall()` and `afterToolCall()` now accept `array $runContext = []` for stateless context passing
+- `AuditMiddleware` now stateless — receives session/agent context via `$runContext` instead of mutable instance properties
+- `TurnExecutor` no longer depends on `AgentMiddlewarePipeline` (moved to `AgentRunner`)
+- `AgentRunContext` now carries `agentName` for middleware context
 - `AgentRunner` now injects resolved `model` and `provider` into options before passing to `TurnExecutor`
+- `LlmClient::chat()` and `chatStream()` return `LlmResponse` DTOs with actual provider/model from API response
 - `SseWriter::finish()` PHPDoc improved to clarify it internally calls `done()`
 
 ## [0.8.3] - 2026-04-17

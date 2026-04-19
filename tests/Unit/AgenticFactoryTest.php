@@ -9,6 +9,7 @@ use ChenZhanjie\Agentic\AgentRunner;
 use ChenZhanjie\Agentic\Contract\MessageStoreInterface;
 use ChenZhanjie\Agentic\Contract\PermissionApprovalStoreInterface;
 use ChenZhanjie\Agentic\Contract\SessionStoreInterface;
+use ChenZhanjie\Agentic\LlmClient;
 use ChenZhanjie\Agentic\PromptBuilder;
 use ChenZhanjie\Agentic\ToolRegistry;
 use PHPUnit\Framework\TestCase;
@@ -63,6 +64,7 @@ class AgenticFactoryTest extends TestCase
         ]);
 
         $services = [
+            LlmClient::class => new LlmClient(providerConfigs: ['test' => ['model' => 'test']], defaultProvider: 'test'),
             AgentRunner::class => $this->createMock(AgentRunner::class),
             ToolRegistry::class => new ToolRegistry(),
             PromptBuilder::class => new PromptBuilder(),
@@ -87,6 +89,7 @@ class AgenticFactoryTest extends TestCase
         $config = $this->createConfigStub([]);
 
         $services = [
+            LlmClient::class => new LlmClient(providerConfigs: ['test' => ['model' => 'test']], defaultProvider: 'test'),
             AgentRunner::class => $this->createMock(AgentRunner::class),
             ToolRegistry::class => new ToolRegistry(),
             PromptBuilder::class => new PromptBuilder(),
@@ -111,6 +114,7 @@ class AgenticFactoryTest extends TestCase
         ]);
 
         $services = [
+            LlmClient::class => new LlmClient(providerConfigs: ['test' => ['model' => 'test']], defaultProvider: 'test'),
             AgentRunner::class => $this->createMock(AgentRunner::class),
             ToolRegistry::class => new ToolRegistry(),
             PromptBuilder::class => new PromptBuilder(),
